@@ -9,7 +9,7 @@ const router = express.Router();
 const ARTIST_SELECT = `
   SELECT u.id, u.name, u.avatar_url, u.bio, u.location, u.created_at,
          p.studio_name, p.styles, p.hourly_rate, p.min_price, p.session_minutes,
-         p.years_experience, p.instagram, p.website, p.accepting_clients,
+         p.years_experience, p.instagram, p.website, p.accepting_clients, p.deposit_amount,
          (SELECT COUNT(*) FROM artworks a WHERE a.artist_id = u.id) AS artwork_count,
          (SELECT COUNT(*) FROM follows f WHERE f.artist_id = u.id) AS follower_count,
          (SELECT COUNT(*) FROM likes l JOIN artworks a ON a.id = l.artwork_id WHERE a.artist_id = u.id) AS like_count,
@@ -49,6 +49,7 @@ function shapeArtist(row) {
     instagram: row.instagram,
     website: row.website,
     accepting_clients: !!row.accepting_clients,
+    deposit_amount: row.deposit_amount || 0,
     artwork_count: row.artwork_count,
     follower_count: row.follower_count,
     like_count: row.like_count,

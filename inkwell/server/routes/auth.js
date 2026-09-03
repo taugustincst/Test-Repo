@@ -1,9 +1,11 @@
 'use strict';
 
 const express = require('express');
+const crypto = require('crypto');
 const { db, STYLES } = require('../db');
+const mailer = require('../mailer');
 const {
-  createSession, destroySession, hashPassword, verifyPassword, withProfile, requireAuth,
+  COOKIE_NAME, createSession, destroySession, hashPassword, verifyPassword, withProfile, requireAuth,
 } = require('../auth');
 const { upload, publicUrl, removeByUrl } = require('../upload');
 
@@ -13,7 +15,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const findByEmail = db.prepare('SELECT * FROM users WHERE email = ?');
 const findById = db.prepare(
-  'SELECT id, email, name, role, avatar_url, bio, location, created_at FROM users WHERE id = ?',
+  'SELECT id, email, name, role, avatar_url, bio, location, email_notifications, created_at FROM users WHERE id = ?',
 );
 const insertUser = db.prepare(`
   INSERT INTO users (email, password_hash, name, role, location, bio)
@@ -50,7 +52,9 @@ router.post('/register', (req, res) => {
 
   const userId = create();
   createSession(res, userId);
-  res.status(201).json({ user: withProfile(findById.get(userId)) });
+  const user = withProfile(findById.get(userId));
+  mailer.notify(mailer.templates.welcome(user));
+  res.status(201).json({ user });
 });
 
 router.post('/login', (req, res) => {
@@ -73,13 +77,13 @@ router.get('/me', (req, res) => {
 });
 
 const updateUser = db.prepare(`
-  UPDATE users SET name = @name, bio = @bio, location = @location WHERE id = @id
+  UPDATE users SET name = @name, bio = @bio, location = @location, email_notifications = @email_notifications WHERE id = @id
 `);
 const upsertProfile = db.prepare(`
   INSERT INTO artist_profiles
-    (user_id, studio_name, styles, hourly_rate, min_price, session_minutes, years_experience, instagram, website, accepting_clients)
+    (user_id, studio_name, styles, hourly_rate, min_price, session_minutes, years_experience, instagram, website, accepting_clients, deposit_amount)
   VALUES
-    (@user_id, @studio_name, @styles, @hourly_rate, @min_price, @session_minutes, @years_experience, @instagram, @website, @accepting_clients)
+    (@user_id, @studio_name, @styles, @hourly_rate, @min_price, @session_minutes, @years_experience, @instagram, @website, @accepting_clients, @deposit_amount)
   ON CONFLICT(user_id) DO UPDATE SET
     studio_name = excluded.studio_name,
     styles = excluded.styles,
@@ -89,7 +93,8 @@ const upsertProfile = db.prepare(`
     years_experience = excluded.years_experience,
     instagram = excluded.instagram,
     website = excluded.website,
-    accepting_clients = excluded.accepting_clients
+    accepting_clients = excluded.accepting_clients,
+    deposit_amount = excluded.deposit_amount
 `);
 
 function optionalInt(value, { min = 0, max = 1000000 } = {}) {
@@ -110,6 +115,9 @@ router.put('/me', requireAuth, (req, res) => {
       name,
       bio: String(body.bio ?? req.user.bio ?? '').slice(0, 2000),
       location: String(body.location ?? req.user.location ?? '').slice(0, 120),
+      email_notifications: body.email_notifications === undefined
+        ? (req.user.email_notifications === false ? 0 : 1)
+        : (body.email_notifications ? 1 : 0),
     });
     if (req.user.role === 'artist') {
       const current = req.user.profile;
@@ -131,6 +139,7 @@ router.put('/me', requireAuth, (req, res) => {
         instagram: String(body.instagram ?? current.instagram).replace(/^@/, '').slice(0, 60),
         website: String(body.website ?? current.website).slice(0, 200),
         accepting_clients: body.accepting_clients === undefined ? (current.accepting_clients ? 1 : 0) : (body.accepting_clients ? 1 : 0),
+        deposit_amount: body.deposit_amount === undefined ? current.deposit_amount : (optionalInt(body.deposit_amount, { max: 100000 }) || 0),
       });
     }
   })();
@@ -139,6 +148,70 @@ router.put('/me', requireAuth, (req, res) => {
 });
 
 const updateAvatar = db.prepare('UPDATE users SET avatar_url = ? WHERE id = ?');
+const updatePassword = db.prepare('UPDATE users SET password_hash = ? WHERE id = ?');
+const deleteOtherSessions = db.prepare('DELETE FROM sessions WHERE user_id = ? AND token != ?');
+const deleteAllSessions = db.prepare('DELETE FROM sessions WHERE user_id = ?');
+const insertReset = db.prepare(`INSERT INTO password_resets (user_id, token_hash, expires_at) VALUES (?, ?, datetime('now', '+1 hour'))`);
+const findReset = db.prepare(`SELECT * FROM password_resets WHERE token_hash = ? AND used_at IS NULL AND expires_at > datetime('now')`);
+const useReset = db.prepare(`UPDATE password_resets SET used_at = datetime('now') WHERE id = ?`);
+const voidResets = db.prepare(`UPDATE password_resets SET used_at = datetime('now') WHERE user_id = ? AND used_at IS NULL`);
+const recentEmails = db.prepare(`
+  SELECT id, subject, body_text, status, created_at FROM email_log WHERE to_user_id = ? ORDER BY created_at DESC, id DESC LIMIT 20
+`);
+
+const hashToken = (token) => crypto.createHash('sha256').update(token).digest('hex');
+
+router.put('/me/password', requireAuth, (req, res) => {
+  const { current_password, new_password } = req.body || {};
+  const user = findByEmail.get(req.user.email);
+  if (!verifyPassword(String(current_password || ''), user.password_hash)) {
+    return res.status(400).json({ error: 'Your current password is incorrect.' });
+  }
+  if (!new_password || String(new_password).length < 8) return res.status(400).json({ error: 'New password must be at least 8 characters.' });
+  updatePassword.run(hashPassword(String(new_password)), user.id);
+  deleteOtherSessions.run(user.id, req.cookies[COOKIE_NAME]);
+  voidResets.run(user.id);
+  mailer.notify(mailer.templates.passwordChanged(user));
+  res.json({ ok: true });
+});
+
+/** Always responds 200 so the endpoint cannot be used to discover accounts. */
+router.post('/forgot', async (req, res) => {
+  const email = String((req.body || {}).email || '').trim();
+  const user = email ? findByEmail.get(email) : null;
+  const response = { ok: true, message: 'If an account exists for that email, a reset link is on its way.' };
+  if (!user) return res.json(response);
+  const token = crypto.randomBytes(32).toString('hex');
+  voidResets.run(user.id);
+  insertReset.run(user.id, hashToken(token));
+  const url = `${mailer.APP_URL}/#/reset?token=${token}`;
+  await mailer.send(mailer.templates.passwordReset(user, url));
+  // Without a mail server there is no way to receive the link, so expose it outside production.
+  if (!mailer.live && process.env.NODE_ENV !== 'production') response.dev_reset_url = url;
+  res.json(response);
+});
+
+router.post('/reset', (req, res) => {
+  const { token, password } = req.body || {};
+  if (!token) return res.status(400).json({ error: 'This reset link is missing its token.' });
+  if (!password || String(password).length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
+  const reset = findReset.get(hashToken(String(token)));
+  if (!reset) return res.status(400).json({ error: 'This reset link is invalid or has expired. Request a new one.' });
+  db.transaction(() => {
+    updatePassword.run(hashPassword(String(password)), reset.user_id);
+    useReset.run(reset.id);
+    deleteAllSessions.run(reset.user_id);
+  })();
+  createSession(res, reset.user_id);
+  const user = withProfile(findById.get(reset.user_id));
+  mailer.notify(mailer.templates.passwordChanged(user));
+  res.json({ user });
+});
+
+/** Recent emails sent to the signed-in user (handy when no SMTP server is configured). */
+router.get('/me/emails', requireAuth, (req, res) => {
+  res.json({ emails: recentEmails.all(req.user.id), live: mailer.live });
+});
 
 router.post('/me/avatar', requireAuth, upload.single('avatar'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'Choose an image to upload.' });

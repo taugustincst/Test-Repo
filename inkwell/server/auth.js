@@ -8,7 +8,7 @@ const COOKIE_NAME = 'inkwell_session';
 const SESSION_DAYS = 30;
 
 const getUserByToken = db.prepare(`
-  SELECT u.id, u.email, u.name, u.role, u.avatar_url, u.bio, u.location, u.created_at
+  SELECT u.id, u.email, u.name, u.role, u.avatar_url, u.bio, u.location, u.email_notifications, u.created_at
   FROM sessions s JOIN users u ON u.id = s.user_id
   WHERE s.token = ? AND s.created_at > datetime('now', ?)
 `);
@@ -19,6 +19,7 @@ const getProfile = db.prepare('SELECT * FROM artist_profiles WHERE user_id = ?')
 /** Attach artist profile fields (parsed) to a user object when the user is an artist. */
 function withProfile(user) {
   if (!user) return user;
+  user.email_notifications = user.email_notifications !== 0;
   if (user.role === 'artist') {
     const profile = getProfile.get(user.id) || {};
     user.profile = {
@@ -31,6 +32,7 @@ function withProfile(user) {
       instagram: profile.instagram || '',
       website: profile.website || '',
       accepting_clients: profile.accepting_clients === undefined ? true : !!profile.accepting_clients,
+      deposit_amount: profile.deposit_amount || 0,
     };
   }
   return user;

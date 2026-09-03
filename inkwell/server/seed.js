@@ -186,7 +186,7 @@ function writeSvg(name, svg) {
 
 const ARTISTS = [
   {
-    name: 'Mara Voss', email: 'mara@inkwell.demo', location: 'Portland, OR', studio: 'Black Lantern Tattoo',
+    name: 'Mara Voss', deposit: 100, email: 'mara@inkwell.demo', location: 'Portland, OR', studio: 'Black Lantern Tattoo',
     styles: ['Blackwork', 'Dotwork', 'Ornamental'], rate: 180, min: 150, years: 11, session: 180,
     bio: 'Large-scale blackwork and ornamental pieces built to flow with the body. I love multi-session sleeves and back pieces, and I keep a few walk-in flash slots open every month.',
     galleries: [
@@ -195,7 +195,7 @@ const ARTISTS = [
     ],
   },
   {
-    name: 'Diego Santamaria', email: 'diego@inkwell.demo', location: 'Austin, TX', studio: 'Lone Star Electric',
+    name: 'Diego Santamaria', deposit: 50, email: 'diego@inkwell.demo', location: 'Austin, TX', studio: 'Lone Star Electric',
     styles: ['Traditional', 'Neo-Traditional'], rate: 150, min: 120, years: 9, session: 120,
     bio: 'Bold lines, solid color, tattoos that will still read from across the room in forty years. Flash always available, custom by appointment.',
     galleries: [
@@ -204,7 +204,7 @@ const ARTISTS = [
     ],
   },
   {
-    name: 'Yuki Hasegawa', email: 'yuki@inkwell.demo', location: 'Los Angeles, CA', studio: 'Kuro Tide',
+    name: 'Yuki Hasegawa', deposit: 200, email: 'yuki@inkwell.demo', location: 'Los Angeles, CA', studio: 'Kuro Tide',
     styles: ['Japanese', 'Illustrative'], rate: 220, min: 300, years: 14, session: 240,
     bio: 'Traditional Japanese motifs: koi, dragons, waves, and peonies. I work mostly on large bodysuit-scale projects and take on a handful of new clients each season.',
     galleries: [
@@ -213,7 +213,7 @@ const ARTISTS = [
     ],
   },
   {
-    name: 'Priya Natarajan', email: 'priya@inkwell.demo', location: 'Brooklyn, NY', studio: 'Thin Air Studio',
+    name: 'Priya Natarajan', deposit: 50, email: 'priya@inkwell.demo', location: 'Brooklyn, NY', studio: 'Thin Air Studio',
     styles: ['Fine Line', 'Minimalist', 'Lettering'], rate: 160, min: 100, years: 6, session: 90,
     bio: 'Delicate fine line botanicals, tiny script, and minimalist symbols. Single-needle specialist. Private studio, one client at a time.',
     galleries: [
@@ -222,7 +222,7 @@ const ARTISTS = [
     ],
   },
   {
-    name: 'Tomasz Kowal', email: 'tomasz@inkwell.demo', location: 'Chicago, IL', studio: 'Northside Realism',
+    name: 'Tomasz Kowal', deposit: 150, email: 'tomasz@inkwell.demo', location: 'Chicago, IL', studio: 'Northside Realism',
     styles: ['Realism', 'Blackwork'], rate: 200, min: 250, years: 12, session: 240,
     bio: 'Black and grey realism, portraits, and photorealistic animals. I book about three months out and require a consultation for every custom piece.',
     galleries: [
@@ -231,7 +231,7 @@ const ARTISTS = [
     ],
   },
   {
-    name: 'Sofia Reinholt', email: 'sofia@inkwell.demo', location: 'Denver, CO', studio: 'Pigment & Co.',
+    name: 'Sofia Reinholt', deposit: 60, email: 'sofia@inkwell.demo', location: 'Denver, CO', studio: 'Pigment & Co.',
     styles: ['Watercolor', 'Geometric', 'Illustrative'], rate: 140, min: 120, years: 5, session: 120,
     bio: 'Color-forward watercolor and geometric pieces. I like combining crisp linework with loose washes of color. Open to collaborations and guest spots.',
     galleries: [
@@ -286,8 +286,8 @@ function seed() {
     VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', ?))
   `);
   const insertProfile = db.prepare(`
-    INSERT INTO artist_profiles (user_id, studio_name, styles, hourly_rate, min_price, session_minutes, years_experience, instagram, website, accepting_clients)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+    INSERT INTO artist_profiles (user_id, studio_name, styles, hourly_rate, min_price, session_minutes, years_experience, instagram, website, accepting_clients, deposit_amount)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
   `);
   const insertGallery = db.prepare('INSERT INTO galleries (artist_id, title, description, created_at) VALUES (?, ?, ?, datetime(\'now\', ?))');
   const insertArtwork = db.prepare(`
@@ -303,7 +303,11 @@ function seed() {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', ?))
   `);
   const insertProposal = db.prepare('INSERT INTO proposals (request_id, artist_id, message, quoted_price, estimated_hours, status) VALUES (?, ?, ?, ?, ?, ?)');
-  const insertAppointment = db.prepare('INSERT INTO appointments (artist_id, client_id, request_id, starts_at, ends_at, note, status) VALUES (?, ?, ?, ?, ?, ?, ?)');
+  const insertAppointment = db.prepare('INSERT INTO appointments (artist_id, client_id, request_id, starts_at, ends_at, note, status, deposit_amount, price) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+  const insertPayment = db.prepare(`
+    INSERT INTO payments (appointment_id, payer_id, payee_id, kind, amount, status, provider, provider_ref, card_last4, note, paid_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 'paid' THEN datetime('now', '-2 days') ELSE NULL END)
+  `);
   const insertMessage = db.prepare('INSERT INTO messages (sender_id, recipient_id, body, read_at, created_at) VALUES (?, ?, ?, ?, datetime(\'now\', ?))');
 
   const run = db.transaction(() => {
@@ -317,7 +321,7 @@ function seed() {
       const info = insertUser.run(a.email, passwordHash, a.name, 'artist', avatar, a.bio, a.location, `-${120 - i * 10} days`);
       const id = Number(info.lastInsertRowid);
       artistIds.push(id);
-      insertProfile.run(id, a.studio, JSON.stringify(a.styles), a.rate, a.min, a.session, a.years, a.name.toLowerCase().replace(/\s+/g, '.'), '');
+      insertProfile.run(id, a.studio, JSON.stringify(a.styles), a.rate, a.min, a.session, a.years, a.name.toLowerCase().replace(/\s+/g, '.'), '', a.deposit || 0);
 
       a.galleries.forEach((gal, gi) => {
         const ginfo = insertGallery.run(id, gal.title, gal.description, `-${100 - i * 8 - gi * 5} days`);
@@ -395,11 +399,15 @@ function seed() {
       return [`${date}T${hhmm}`, `${date}T${pad(Math.floor(endTotal / 60))}:${pad(endTotal % 60)}`];
     };
     let [s, e] = future(7, '11:00', 120);
-    insertAppointment.run(artistIds[1], clientIds[2], requestIds[2], s, e, 'Panther head, outer thigh.', 'confirmed');
+    let appt = Number(insertAppointment.run(artistIds[1], clientIds[2], requestIds[2], s, e, 'Panther head, outer thigh.', 'confirmed', 50, null).lastInsertRowid);
+    insertPayment.run(appt, clientIds[2], artistIds[1], 'deposit', 50, 'paid', 'demo', 'demo_ch_seed1', '4242', 'Booking deposit', 'paid');
     [s, e] = future(9, '10:00', 180);
-    insertAppointment.run(artistIds[0], clientIds[0], null, s, e, 'Consult plus first session on the forearm band if we agree on the design.', 'pending');
+    appt = Number(insertAppointment.run(artistIds[0], clientIds[0], null, s, e, 'Consult plus first session on the forearm band if we agree on the design.', 'pending', 100, null).lastInsertRowid);
+    insertPayment.run(appt, clientIds[0], artistIds[0], 'deposit', 100, 'pending', null, null, null, 'Booking deposit', 'pending');
     [s, e] = future(-14, '10:00', 90);
-    insertAppointment.run(artistIds[3], clientIds[1], null, s, e, 'Tiny wrist piece.', 'completed');
+    appt = Number(insertAppointment.run(artistIds[3], clientIds[1], null, s, e, 'Tiny wrist piece.', 'completed', 50, 150).lastInsertRowid);
+    insertPayment.run(appt, clientIds[1], artistIds[3], 'deposit', 50, 'paid', 'demo', 'demo_ch_seed2', '4242', 'Booking deposit', 'paid');
+    insertPayment.run(appt, clientIds[1], artistIds[3], 'balance', 100, 'paid', 'demo', 'demo_ch_seed3', '4242', 'Session balance', 'paid');
 
     // Messages.
     const chat = [

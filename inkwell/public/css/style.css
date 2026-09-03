@@ -131,7 +131,13 @@ p { margin: 0 0 1em; }
 .pill--pending { background: var(--amber-soft); color: var(--amber); }
 .pill--confirmed, .pill--accepted, .pill--open, .pill--completed { background: var(--green-soft); color: var(--green); }
 .pill--declined, .pill--cancelled, .pill--closed { background: var(--red-soft); color: var(--accent); }
-.pill--in_progress { background: var(--blue-soft); color: var(--blue); }
+.pill--in_progress, .pill--refunded { background: var(--blue-soft); color: var(--blue); }
+.pill--paid { background: var(--green-soft); color: var(--green); }
+.pill--forfeited { background: var(--red-soft); color: var(--accent); }
+.table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+.table th, .table td { text-align: left; padding: 10px 8px; border-top: 1px solid var(--line); vertical-align: middle; white-space: nowrap; }
+.table th { border-top: 0; color: var(--text-faint); font-weight: 500; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }
+details.list-item summary::-webkit-details-marker { display: none; }
 
 /* Cards */
 .card { background: var(--bg-elev); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; }

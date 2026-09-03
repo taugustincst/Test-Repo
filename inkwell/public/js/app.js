@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const state = { user: null, styles: [], unread: 0, ready: false };
+  const state = { user: null, styles: [], unread: 0, ready: false, pay: { provider: 'demo', mode: 'inline', test_cards: [], refund_window_hours: 48 } };
   const main = document.getElementById('main');
   const navEl = document.getElementById('nav');
   const modalRoot = document.getElementById('modal-root');
@@ -759,10 +759,13 @@
             ${artist.hourly_rate ? `<div class="row row--between"><span class="muted">Hourly rate</span><strong>${money(artist.hourly_rate)}</strong></div>` : ''}
             ${artist.min_price ? `<div class="row row--between"><span class="muted">Minimum</span><strong>${money(artist.min_price)}</strong></div>` : ''}
             <div class="row row--between"><span class="muted">Session length</span><strong>${avail.session_minutes} min</strong></div>
+            <div class="row row--between"><span class="muted">Deposit</span><strong>${avail.deposit_amount ? money(avail.deposit_amount) : 'None'}</strong></div>
             <hr class="divider" style="margin:14px 0">
             <div class="small muted">Studio hours</div>
             ${avail.availability.map((w) => `<div class="row row--between small"><span>${WEEKDAYS[w.weekday]}</span><span>${w.start_time} – ${w.end_time}</span></div>`).join('') || '<div class="small faint">Not published</div>'}
-            <p class="small faint" style="margin-top:14px">Your request is held as pending until the artist confirms. Deposits and payment are arranged with the artist directly.</p>
+            <p class="small faint" style="margin-top:14px">${avail.deposit_amount
+              ? `A ${money(avail.deposit_amount)} deposit holds your slot and is paid right after you book. It is refunded in full if the artist declines or if you cancel at least ${avail.refund_window_hours || state.pay.refund_window_hours} hours ahead. The remaining balance is settled after the session.`
+              : 'This artist does not take a deposit. Payment is settled after the session.'}</p>
           </div>
         </aside>
       </div>`;
@@ -823,6 +826,11 @@
     if (isArtist && a.status === 'confirmed') actions.push(`<button class="btn btn--sm" data-act="complete" data-id="${a.id}">Mark completed</button>`);
     if (['pending', 'confirmed'].includes(a.status)) actions.push(`<button class="btn btn--danger btn--sm" data-act="cancel" data-id="${a.id}">Cancel</button>`);
     actions.push(`<a class="btn btn--ghost btn--sm" href="#/messages/${other.id}">Message</a>`);
+    if (!isArtist && ['pending', 'confirmed', 'completed'].includes(a.status)) {
+      (a.payments || []).filter((p) => p.status === 'pending').forEach((p) => actions.unshift(
+        `<button class="btn btn--sm" data-pay="${p.id}" data-amount="${p.amount}" data-kind="${p.kind}">Pay ${money(p.amount)} ${p.kind}</button>`,
+      ));
+    }
     return `
       <div class="card appt">
         <div class="appt__date"><span>${d.toLocaleDateString(undefined, { month: 'short' })}</span><strong>${d.getDate()}</strong><span>${d.toLocaleDateString(undefined, { weekday: 'short' })}</span></div>
@@ -831,9 +839,118 @@
           <div class="row" style="margin-top:6px">${avatar(other.avatar, other.name, 'avatar--xs')}<a href="#/artists/${isArtist ? me.id : a.artist_id}"><strong>${esc(other.name)}</strong></a><span class="muted small">${esc(other.label)}</span></div>
           ${a.request_title ? `<div class="small muted" style="margin-top:4px">For request: <a class="link" href="#/requests/${a.request_id}">${esc(a.request_title)}</a></div>` : ''}
           ${a.note ? `<p class="small muted" style="margin:6px 0 0">${esc(a.note)}</p>` : ''}
+          ${paymentsLine(a)}
         </div>
         <div class="appt__actions">${actions.join('')}</div>
       </div>`;
+  }
+
+  function paymentsLine(a) {
+    const bits = [];
+    if (a.price) bits.push(`<span class="tag">Total ${money(a.price)}</span>`);
+    (a.payments || []).forEach((p) => {
+      const label = { pending: 'due', paid: 'paid', refunded: 'refunded', forfeited: 'kept', cancelled: 'void' }[p.status] || p.status;
+      bits.push(`<span class="pill pill--${attr(p.status)}" title="${attr(p.note || '')}">${money(p.amount)} ${esc(p.kind)} ${label}${p.card_last4 ? ` ·· ${esc(p.card_last4)}` : ''}</span>`);
+    });
+    if (!bits.length && !a.deposit_amount) return '';
+    return `<div class="chips" style="margin-top:8px">${bits.join('')}</div>`;
+  }
+
+  /** Wire appointment action buttons (confirm/decline/cancel/complete/pay) inside `root`. */
+  function bindApptActions(root, reload) {
+    $$('[data-act]', root).forEach((b) => b.addEventListener('click', async () => {
+      const { act, id } = b.dataset;
+      if (act === 'cancel' && !confirm('Cancel this appointment?')) return;
+      if (act === 'complete') return completeModal(id, reload);
+      try {
+        await api.post(`/api/appointments/${id}/${act}`);
+        toast({ confirm: 'Booking confirmed', decline: 'Booking declined', cancel: 'Booking cancelled' }[act] || 'Updated');
+        reload();
+      } catch (err) { handleError(err); }
+    }));
+    $$('[data-pay]', root).forEach((b) => b.addEventListener('click', () => payModal(b.dataset.pay, Number(b.dataset.amount), b.dataset.kind, reload)));
+  }
+
+  function completeModal(id, reload) {
+    const modal = openModal(`
+      <div class="modal__panel">
+        <div class="modal__head"><h3 style="margin:0">Complete session</h3><button class="modal__close" data-close-modal>×</button></div>
+        <form class="form modal__body" data-form>
+          <div class="error" hidden></div>
+          <div class="field"><label>Session total ($)</label><input name="price" type="number" min="0" step="5" placeholder="Leave blank if nothing more is owed"><span class="hint">Any paid deposit is subtracted and the client is asked to pay the remaining balance.</span></div>
+          <button class="btn btn--block">Mark completed</button>
+        </form>
+      </div>`, { small: true });
+    const form = $('[data-form]', modal);
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        await api.post(`/api/appointments/${id}/complete`, { price: form.price.value });
+        closeModal(); toast('Session completed'); reload();
+      } catch (err) { handleError(err, $('.error', form)); }
+    });
+  }
+
+  async function payModal(paymentId, amount, kind, reload) {
+    if (state.pay.mode === 'redirect') {
+      try {
+        const { url } = await api.post(`/api/payments/${paymentId}/checkout`);
+        window.location.href = url;
+      } catch (err) { handleError(err); }
+      return;
+    }
+    const year = new Date().getFullYear();
+    const modal = openModal(`
+      <div class="modal__panel">
+        <div class="modal__head"><div><h3 style="margin:0">Pay ${money(amount)} ${esc(kind)}</h3><div class="small muted">Card details are processed by the ${esc(state.pay.provider)} provider.</div></div><button class="modal__close" data-close-modal>×</button></div>
+        <form class="form modal__body" data-form autocomplete="off">
+          <div class="error" hidden></div>
+          <div class="field"><label>Name on card</label><input name="name" value="${attr(state.user.name)}" required></div>
+          <div class="field"><label>Card number</label><input name="number" inputmode="numeric" placeholder="4242 4242 4242 4242" required></div>
+          <div class="form-row">
+            <div class="field"><label>Expiry</label><div class="row" style="gap:6px"><input name="exp_month" placeholder="MM" inputmode="numeric" maxlength="2" required style="width:70px"><input name="exp_year" placeholder="YYYY" inputmode="numeric" maxlength="4" value="${year + 2}" required style="width:90px"></div></div>
+            <div class="field"><label>Security code</label><input name="cvc" inputmode="numeric" maxlength="4" placeholder="123" required style="width:90px"></div>
+          </div>
+          ${state.pay.test_cards.length ? `<div class="demo-box">Test cards: ${state.pay.test_cards.map((c) => `<code>${esc(c.number)}</code> ${esc(c.outcome)}`).join(' · ')}</div>` : ''}
+          <button class="btn btn--block btn--lg">Pay ${money(amount)}</button>
+        </form>
+      </div>`, { small: true });
+    const form = $('[data-form]', modal);
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = form.querySelector('button.btn'); btn.disabled = true;
+      try {
+        await api.post(`/api/payments/${paymentId}/pay`, { card: formData(form) });
+        closeModal(); toast(`${money(amount)} ${kind} paid`); reload();
+      } catch (err) { handleError(err, $('.error', form)); btn.disabled = false; }
+    });
+  }
+
+  function paymentsTable(payments) {
+    const me = state.user;
+    if (!payments.length) return '<div class="empty"><p>No payments yet.</p></div>';
+    return `<div style="overflow-x:auto"><table class="table">
+      <thead><tr><th>When</th><th>${me.role === 'artist' ? 'Client' : 'Artist'}</th><th>Session</th><th>Type</th><th>Amount</th><th>Status</th></tr></thead>
+      <tbody>${payments.map((p) => `<tr>
+        <td>${timeAgo(p.paid_at || p.created_at)}</td>
+        <td>${esc(me.role === 'artist' ? p.client_name : p.artist_name)}</td>
+        <td>${fmtSlot(p.starts_at)}</td>
+        <td>${esc(p.kind)}${p.card_last4 ? ` <span class="faint">·· ${esc(p.card_last4)}</span>` : ''}</td>
+        <td><strong>${money(p.amount)}</strong></td>
+        <td><span class="pill pill--${attr(p.status)}" title="${attr(p.note || '')}">${esc(p.status)}</span></td>
+      </tr>`).join('')}</tbody></table></div>`;
+  }
+
+  async function viewPaymentsReturn(params) {
+    if (!requireLogin('#/appointments')) return;
+    loading();
+    const id = params.get('payment');
+    const sessionId = params.get('session_id');
+    try {
+      await api.post(`/api/payments/${id}/confirm`, { session_id: sessionId });
+      toast('Payment received');
+    } catch (err) { handleError(err); }
+    location.hash = '#/appointments';
   }
 
   async function viewAppointments() {
@@ -856,10 +973,7 @@
       <section class="section"><div class="section__head"><h2>Past &amp; closed</h2></div>
         <div class="stack">${past.length ? past.map(apptCard).join('') : '<p class="faint">No history yet.</p>'}</div>
       </section>`;
-    $$('[data-act]').forEach((b) => b.addEventListener('click', async () => {
-      if (b.dataset.act === 'cancel' && !confirm('Cancel this appointment?')) return;
-      try { await api.post(`/api/appointments/${b.dataset.id}/${b.dataset.act}`); toast(`Appointment ${b.dataset.act === 'complete' ? 'completed' : `${b.dataset.act}ed`}`.replace('cancelled', 'cancelled')); viewAppointments(); } catch (err) { handleError(err); }
-    }));
+    bindApptActions(main, viewAppointments);
   }
 
   /* ---------- messages ---------- */
@@ -945,9 +1059,10 @@
     let appts;
     let avail;
     let proposals;
+    let pay;
     try {
-      [{ artist }, { appointments: appts }, avail, { requests: proposals }] = await Promise.all([
-        api.get(`/api/artists/${me.id}`), api.get('/api/appointments'), api.get(`/api/artists/${me.id}/availability`), api.get('/api/requests', { mine: '1' }),
+      [{ artist }, { appointments: appts }, avail, { requests: proposals }, pay] = await Promise.all([
+        api.get(`/api/artists/${me.id}`), api.get('/api/appointments'), api.get(`/api/artists/${me.id}/availability`), api.get('/api/requests', { mine: '1' }), api.get('/api/payments'),
       ]);
     } catch (e) { return handleError(e); }
     const tab = params.get('tab') || 'galleries';
@@ -963,12 +1078,14 @@
         <div class="kpi"><strong>${artist.like_count}</strong><span>likes</span></div>
         <div class="kpi"><strong>${pending}</strong><span>booking requests</span></div>
         <div class="kpi"><strong>${proposals.length}</strong><span>proposals sent</span></div>
+        <div class="kpi"><strong>${money(pay.summary.collected)}</strong><span>collected${pay.summary.outstanding ? ` · ${money(pay.summary.outstanding)} due` : ''}</span></div>
       </div>
       <div class="tabs" style="margin-top:24px">
         <button data-tab="galleries" class="${tab === 'galleries' ? 'active' : ''}">Galleries</button>
         <button data-tab="availability" class="${tab === 'availability' ? 'active' : ''}">Availability</button>
         <button data-tab="bookings" class="${tab === 'bookings' ? 'active' : ''}">Bookings${pending ? ` (${pending})` : ''}</button>
         <button data-tab="proposals" class="${tab === 'proposals' ? 'active' : ''}">Proposals</button>
+        <button data-tab="payments" class="${tab === 'payments' ? 'active' : ''}">Payments</button>
       </div>
       <div data-panel></div>`;
 
@@ -1030,14 +1147,21 @@
         panel.innerHTML = `
           <div class="section__head"><h2>Requests &amp; upcoming sessions</h2><a class="link" href="#/appointments">Full schedule</a></div>
           <div class="stack">${upcoming.length ? upcoming.map(apptCard).join('') : '<div class="empty"><h3>No upcoming sessions</h3><p>Publish your hours so clients can book.</p></div>'}</div>`;
-        $$('[data-act]', panel).forEach((b) => b.addEventListener('click', async () => {
-          if (b.dataset.act === 'cancel' && !confirm('Cancel this appointment?')) return;
-          try { await api.post(`/api/appointments/${b.dataset.id}/${b.dataset.act}`); toast('Updated'); viewArtistDashboard(new URLSearchParams('tab=bookings')); } catch (err) { handleError(err); }
-        }));
+        bindApptActions(panel, () => viewArtistDashboard(new URLSearchParams('tab=bookings')));
       } else if (name === 'proposals') {
         panel.innerHTML = `
           <div class="section__head"><h2>Requests you proposed on</h2><a class="link" href="#/requests">Browse open requests</a></div>
           ${proposals.length ? `<div class="grid grid--2">${proposals.map(requestCard).join('')}</div>` : '<div class="empty"><h3>No proposals yet</h3><p>Browse client requests and send a proposal to find new clients.</p></div>'}`;
+      } else if (name === 'payments') {
+        panel.innerHTML = `
+          <div class="section__head"><h2>Payments</h2><span class="muted small">Deposit: ${artist.deposit_amount ? money(artist.deposit_amount) : 'none'} · <a class="link" href="#/settings">Change</a></span></div>
+          <div class="kpis" style="margin-bottom:18px">
+            <div class="kpi"><strong>${money(pay.summary.collected)}</strong><span>collected</span></div>
+            <div class="kpi"><strong>${money(pay.summary.outstanding)}</strong><span>awaiting payment</span></div>
+            <div class="kpi"><strong>${money(pay.summary.refunded)}</strong><span>refunded</span></div>
+          </div>
+          ${paymentsTable(pay.payments)}
+          <p class="small faint" style="margin-top:14px">Deposits are refunded automatically when you decline or cancel, and when a client cancels ${state.pay.refund_window_hours}+ hours ahead. Late client cancellations keep the deposit.</p>`;
       }
     };
     $$('[data-tab]').forEach((b) => b.addEventListener('click', () => renderTab(b.dataset.tab)));
@@ -1048,8 +1172,10 @@
     const me = state.user;
     let requests;
     let appts;
-    try { [{ requests }, { appointments: appts }] = await Promise.all([api.get('/api/requests', { mine: '1' }), api.get('/api/appointments')]); } catch (e) { return handleError(e); }
+    let pay;
+    try { [{ requests }, { appointments: appts }, pay] = await Promise.all([api.get('/api/requests', { mine: '1' }), api.get('/api/appointments'), api.get('/api/payments')]); } catch (e) { return handleError(e); }
     const upcoming = appts.filter((a) => ['pending', 'confirmed'].includes(a.status));
+    const dueNow = pay.payments.filter((p) => p.status === 'pending' && ['pending', 'confirmed', 'completed'].includes(p.appointment_status)).reduce((n, p) => n + p.amount, 0);
     main.innerHTML = `
       <div class="page-head">
         <div><h1>Hi, ${esc(me.name.split(' ')[0])}</h1><p class="muted">Your requests and sessions in one place.</p></div>
@@ -1059,6 +1185,7 @@
         <div class="kpi"><strong>${requests.filter((r) => r.status === 'open').length}</strong><span>open requests</span></div>
         <div class="kpi"><strong>${requests.reduce((n, r) => n + r.proposal_count, 0)}</strong><span>proposals received</span></div>
         <div class="kpi"><strong>${upcoming.length}</strong><span>upcoming sessions</span></div>
+        <div class="kpi"><strong>${money(dueNow)}</strong><span>due now</span></div>
       </div>
       <section class="section">
         <div class="section__head"><h2>Upcoming sessions</h2><a class="link" href="#/appointments">All bookings</a></div>
@@ -1067,11 +1194,12 @@
       <section class="section">
         <div class="section__head"><h2>Your requests</h2></div>
         ${requests.length ? `<div class="grid grid--2">${requests.map(requestCard).join('')}</div>` : '<div class="empty"><h3>No requests yet</h3><p>Describe what you want and let artists send proposals.</p></div>'}
+      </section>
+      <section class="section">
+        <div class="section__head"><h2>Payments</h2></div>
+        ${paymentsTable(pay.payments)}
       </section>`;
-    $$('[data-act]').forEach((b) => b.addEventListener('click', async () => {
-      if (b.dataset.act === 'cancel' && !confirm('Cancel this appointment?')) return;
-      try { await api.post(`/api/appointments/${b.dataset.id}/${b.dataset.act}`); toast('Updated'); viewClientDashboard(); } catch (err) { handleError(err); }
-    }));
+    bindApptActions(main, viewClientDashboard);
   }
 
   /* ---------- settings ---------- */
@@ -1093,6 +1221,7 @@
             <div class="field"><label>Location</label><input name="location" value="${attr(u.location || '')}" placeholder="City, State"></div>
           </div>
           <div class="field"><label>Bio</label><textarea name="bio" placeholder="${u.role === 'artist' ? 'Your style, your studio, what you love to tattoo.' : 'A little about you and what you collect.'}">${esc(u.bio || '')}</textarea></div>
+          <label class="check"><input type="checkbox" name="email_notifications" ${u.email_notifications !== false ? 'checked' : ''}> Email me about bookings, proposals, payments and messages</label>
           ${u.role === 'artist' ? `
             <hr class="divider" style="margin:6px 0">
             <h3>Studio</h3>
@@ -1109,17 +1238,50 @@
               <div class="field"><label>Session length (minutes)</label><input name="session_minutes" type="number" min="30" max="720" step="15" value="${attr(p.session_minutes)}"><span class="hint">Booking slots are this long.</span></div>
               <div class="field"><label>Instagram</label><input name="instagram" value="${attr(p.instagram || '')}" placeholder="handle"></div>
             </div>
-            <div class="field"><label>Website</label><input name="website" value="${attr(p.website || '')}" placeholder="yourstudio.com"></div>
+            <div class="form-row">
+              <div class="field"><label>Website</label><input name="website" value="${attr(p.website || '')}" placeholder="yourstudio.com"></div>
+              <div class="field"><label>Booking deposit ($)</label><input name="deposit_amount" type="number" min="0" step="5" value="${attr(p.deposit_amount || 0)}"><span class="hint">Charged when a client books. 0 means no deposit.</span></div>
+            </div>
             <label class="check"><input type="checkbox" name="accepting_clients" ${p.accepting_clients ? 'checked' : ''}> Taking new clients and bookings</label>
           ` : ''}
           <button class="btn">Save changes</button>
         </form>
+        <form class="form card" data-password style="margin-top:14px">
+          <h3>Change password</h3>
+          <div class="error" hidden></div>
+          <div class="form-row">
+            <div class="field"><label>Current password</label><input name="current_password" type="password" required autocomplete="current-password"></div>
+            <div class="field"><label>New password</label><input name="new_password" type="password" minlength="8" required autocomplete="new-password"></div>
+          </div>
+          <div class="row row--between"><span class="hint">Other devices are signed out when you change it.</span><button class="btn btn--subtle">Update password</button></div>
+        </form>
+        <div class="card" style="margin-top:14px" data-emails>
+          <h3>Recent emails</h3>
+          <div class="loading">Loading</div>
+        </div>
       </div>`;
+    const pwForm = $('[data-password]');
+    pwForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try { await api.put('/api/auth/me/password', formData(pwForm)); pwForm.reset(); toast('Password updated'); } catch (err) { handleError(err, $('.error', pwForm)); }
+    });
+    api.get('/api/auth/me/emails').then((r) => {
+      const box = $('[data-emails]');
+      if (!box) return;
+      box.innerHTML = `<h3>Recent emails</h3>
+        <p class="small muted">${r.live ? 'Delivered through the configured mail server.' : 'No mail server is configured, so notifications are recorded here instead of being delivered.'}</p>
+        ${r.emails.length ? r.emails.map((m) => `
+          <details class="list-item" style="display:block">
+            <summary style="cursor:pointer;display:flex;justify-content:space-between;gap:12px"><span>${esc(m.subject)}</span><span class="faint small">${m.status === 'skipped' ? 'muted · ' : ''}${timeAgo(m.created_at)}</span></summary>
+            <pre class="small muted" style="white-space:pre-wrap;margin:10px 0 0;font-family:inherit">${esc(m.body_text)}</pre>
+          </details>`).join('') : '<p class="faint small">Nothing yet.</p>'}`;
+    }).catch(() => {});
     $$('label.chip').forEach((l) => l.addEventListener('click', () => setTimeout(() => l.classList.toggle('active', l.querySelector('input').checked), 0)));
     const form = $('[data-form]');
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       const data = formData(form);
+      data.email_notifications = form.email_notifications.checked;
       if (u.role === 'artist') {
         data.styles = $$('input[name="styles"]:checked').map((i) => i.value);
         data.accepting_clients = form.accepting_clients.checked;
@@ -1145,7 +1307,7 @@
           <div class="field"><label>Email</label><input name="email" type="email" required autofocus></div>
           <div class="field"><label>Password</label><input name="password" type="password" required></div>
           <button class="btn btn--block btn--lg">Log in</button>
-          <p class="muted small" style="text-align:center;margin:0">New here? <a class="link" href="#/register">Create an account</a></p>
+          <p class="muted small" style="text-align:center;margin:0">New here? <a class="link" href="#/register">Create an account</a> · <a class="link" href="#/forgot">Forgot password?</a></p>
         </form>
         <div class="demo-box" style="margin-top:14px">
           <strong>Try a demo account</strong> · password <code>password123</code><br>
@@ -1205,6 +1367,59 @@
     });
   }
 
+  function viewForgot() {
+    main.innerHTML = `
+      <div class="narrow" style="max-width:440px">
+        <h1>Forgot your password?</h1>
+        <p class="muted">Enter your email and we will send a link to choose a new one.</p>
+        <form class="form card" data-form>
+          <div class="error" hidden></div>
+          <div class="field"><label>Email</label><input name="email" type="email" required autofocus></div>
+          <button class="btn btn--block btn--lg">Send reset link</button>
+          <p class="muted small" style="text-align:center;margin:0"><a class="link" href="#/login">Back to log in</a></p>
+        </form>
+      </div>`;
+    const form = $('[data-form]');
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        const r = await api.post('/api/auth/forgot', formData(form));
+        main.innerHTML = `
+          <div class="narrow" style="max-width:440px">
+            <h1>Check your inbox</h1>
+            <div class="card"><p>${esc(r.message)}</p><p class="muted small" style="margin:0">The link works for one hour.</p></div>
+            ${r.dev_reset_url ? `<div class="demo-box" style="margin-top:14px"><strong>No mail server is configured.</strong> For this demo, here is the link that would have been emailed:<br><a class="link" href="${attr(r.dev_reset_url.replace(/^.*\/#/, '#'))}">Reset password</a></div>` : ''}
+          </div>`;
+      } catch (err) { handleError(err, $('.error', form)); }
+    });
+  }
+
+  function viewReset(params) {
+    const token = params.get('token') || '';
+    main.innerHTML = `
+      <div class="narrow" style="max-width:440px">
+        <h1>Choose a new password</h1>
+        <form class="form card" data-form>
+          <div class="error" hidden></div>
+          ${token ? '' : '<div class="error">This reset link is missing its token. <a class="link" href="#/forgot">Request a new one.</a></div>'}
+          <div class="field"><label>New password</label><input name="password" type="password" minlength="8" required autocomplete="new-password" autofocus></div>
+          <div class="field"><label>Confirm password</label><input name="confirm" type="password" minlength="8" required autocomplete="new-password"></div>
+          <button class="btn btn--block btn--lg" ${token ? '' : 'disabled'}>Save password</button>
+        </form>
+      </div>`;
+    const form = $('[data-form]');
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (form.password.value !== form.confirm.value) return handleError(new Error('Passwords do not match.'), $('.error', form));
+      try {
+        const r = await api.post('/api/auth/reset', { token, password: form.password.value });
+        state.user = r.user; renderNav(); refreshUnread();
+        toast('Password updated. You are signed in.');
+        location.hash = '#/';
+      } catch (err) { handleError(err, $('.error', form)); }
+    });
+  }
+
   /* ---------- router ---------- */
 
   const routes = [
@@ -1223,6 +1438,9 @@
     [/^\/settings$/, () => viewSettings()],
     [/^\/login$/, (m, p) => viewLogin(p)],
     [/^\/register$/, () => viewRegister()],
+    [/^\/forgot$/, () => viewForgot()],
+    [/^\/reset$/, (m, p) => viewReset(p)],
+    [/^\/payments\/return$/, (m, p) => viewPaymentsReturn(p)],
   ];
 
   function route() {
@@ -1244,8 +1462,9 @@
 
   async function boot() {
     try {
-      const r = await api.get('/api/auth/me');
+      const [r, pay] = await Promise.all([api.get('/api/auth/me'), api.get('/api/payments/config').catch(() => null)]);
       state.user = r.user; state.styles = r.styles;
+      if (pay) state.pay = pay;
     } catch { state.styles = []; }
     state.ready = true;
     route();

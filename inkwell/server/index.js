@@ -21,6 +21,7 @@ function createApp() {
   app.use('/api', require('./routes/galleries'));
   app.use('/api/requests', require('./routes/requests'));
   app.use('/api/messages', require('./routes/messages'));
+  app.use('/api/payments', require('./routes/payments'));
 
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found.' }));
 

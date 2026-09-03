@@ -4,6 +4,7 @@ const express = require('express');
 const { db, STYLES } = require('../db');
 const { requireAuth, requireRole } = require('../auth');
 const { upload, publicUrl } = require('../upload');
+const mailer = require('../mailer');
 
 const router = express.Router();
 
@@ -151,7 +152,9 @@ router.post('/:id/proposals', requireRole('artist'), (req, res) => {
     money(body.quoted_price),
     Number.isFinite(hours) && hours > 0 ? Math.round(hours * 10) / 10 : null,
   );
-  res.status(201).json({ request: shape(getRequest.get(request.id), req.user), proposal: myProposal.get(request.id, req.user.id) });
+  const proposal = myProposal.get(request.id, req.user.id);
+  mailer.notify(mailer.templates.proposalReceived(request, { ...proposal, artist_name: req.user.name }));
+  res.status(201).json({ request: shape(getRequest.get(request.id), req.user), proposal });
 });
 
 function decideProposal(status) {
@@ -168,6 +171,7 @@ function decideProposal(status) {
         updateStatus.run('in_progress', request.id);
       }
     })();
+    mailer.notify(mailer.templates.proposalDecided(request, proposal, status === 'accepted'));
     res.json({ proposal: getProposal.get(proposal.id), request: shape(getRequest.get(request.id), req.user) });
   };
 }

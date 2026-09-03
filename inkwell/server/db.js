@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS users (
   avatar_url TEXT,
   bio TEXT DEFAULT '',
   location TEXT DEFAULT '',
+  email_notifications INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -36,7 +37,8 @@ CREATE TABLE IF NOT EXISTS artist_profiles (
   years_experience INTEGER,
   instagram TEXT DEFAULT '',
   website TEXT DEFAULT '',
-  accepting_clients INTEGER NOT NULL DEFAULT 1
+  accepting_clients INTEGER NOT NULL DEFAULT 1,
+  deposit_amount INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -133,6 +135,47 @@ CREATE TABLE IF NOT EXISTS appointments (
   note TEXT DEFAULT '',
   status TEXT NOT NULL DEFAULT 'pending'
     CHECK (status IN ('pending', 'confirmed', 'declined', 'cancelled', 'completed')),
+  deposit_amount INTEGER NOT NULL DEFAULT 0,
+  price INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS payments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  appointment_id INTEGER NOT NULL REFERENCES appointments(id) ON DELETE CASCADE,
+  payer_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  payee_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('deposit', 'balance')),
+  amount INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'paid', 'refunded', 'forfeited', 'cancelled')),
+  provider TEXT,
+  provider_ref TEXT,
+  card_last4 TEXT,
+  note TEXT DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  paid_at TEXT,
+  refunded_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS password_resets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL UNIQUE,
+  expires_at TEXT NOT NULL,
+  used_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS email_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  to_user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  to_email TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  body_text TEXT NOT NULL,
+  body_html TEXT,
+  status TEXT NOT NULL DEFAULT 'logged' CHECK (status IN ('logged', 'sent', 'failed', 'skipped')),
+  error TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -152,9 +195,22 @@ CREATE INDEX IF NOT EXISTS idx_requests_status ON tattoo_requests(status);
 CREATE INDEX IF NOT EXISTS idx_appointments_artist ON appointments(artist_id, starts_at);
 CREATE INDEX IF NOT EXISTS idx_appointments_client ON appointments(client_id, starts_at);
 CREATE INDEX IF NOT EXISTS idx_messages_pair ON messages(sender_id, recipient_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_payments_appt ON payments(appointment_id);
+CREATE INDEX IF NOT EXISTS idx_payments_users ON payments(payer_id, payee_id);
+CREATE INDEX IF NOT EXISTS idx_email_log_user ON email_log(to_user_id, created_at);
 `;
 
 db.exec(SCHEMA);
+
+/** Add a column to an existing table if it is missing (lightweight migrations for older databases). */
+function ensureColumn(table, column, ddl) {
+  const cols = db.pragma(`table_info(${table})`).map((c) => c.name);
+  if (!cols.includes(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+}
+ensureColumn('users', 'email_notifications', 'INTEGER NOT NULL DEFAULT 1');
+ensureColumn('artist_profiles', 'deposit_amount', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('appointments', 'deposit_amount', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('appointments', 'price', 'INTEGER');
 
 /** Lists of styles used for filters and validation. */
 const STYLES = [

@@ -3,6 +3,7 @@
 const express = require('express');
 const { db } = require('../db');
 const { requireAuth } = require('../auth');
+const mailer = require('../mailer');
 
 const router = express.Router();
 
@@ -30,6 +31,7 @@ const markRead = db.prepare(`
 const insertMessage = db.prepare('INSERT INTO messages (sender_id, recipient_id, body) VALUES (?, ?, ?)');
 const getUser = db.prepare('SELECT id, name, avatar_url, role, location FROM users WHERE id = ?');
 const unreadTotal = db.prepare('SELECT COUNT(*) AS n FROM messages WHERE recipient_id = ? AND read_at IS NULL');
+const unreadFrom = db.prepare('SELECT COUNT(*) AS n FROM messages WHERE sender_id = ? AND recipient_id = ? AND read_at IS NULL');
 
 router.get('/', requireAuth, (req, res) => {
   res.json({ conversations: conversations.all({ me: req.user.id }) });
@@ -52,7 +54,10 @@ router.post('/:userId', requireAuth, (req, res) => {
   if (other.id === req.user.id) return res.status(400).json({ error: 'You cannot message yourself.' });
   const body = String((req.body || {}).body || '').trim();
   if (!body) return res.status(400).json({ error: 'Write a message first.' });
+  // Email once per unread burst: if they already have unread messages from us, they were told.
+  const alreadyWaiting = unreadFrom.get(req.user.id, other.id).n > 0;
   insertMessage.run(req.user.id, other.id, body.slice(0, 4000));
+  if (!alreadyWaiting) mailer.notify(mailer.templates.newMessage(req.user, other.id, body));
   res.status(201).json({ other, messages: thread.all({ me: req.user.id, other: other.id }) });
 });
 
