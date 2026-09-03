@@ -13,9 +13,11 @@ const ARTIST_SELECT = `
          (SELECT COUNT(*) FROM artworks a WHERE a.artist_id = u.id) AS artwork_count,
          (SELECT COUNT(*) FROM follows f WHERE f.artist_id = u.id) AS follower_count,
          (SELECT COUNT(*) FROM likes l JOIN artworks a ON a.id = l.artwork_id WHERE a.artist_id = u.id) AS like_count,
-         (SELECT a.image_url FROM artworks a WHERE a.artist_id = u.id ORDER BY a.created_at DESC, a.id DESC LIMIT 1) AS cover_url
+         (SELECT COALESCE(a.thumb_url, a.image_url) FROM artworks a WHERE a.artist_id = u.id ORDER BY a.created_at DESC, a.id DESC LIMIT 1) AS cover_url,
+         (SELECT ROUND(AVG(rating), 1) FROM reviews rv WHERE rv.artist_id = u.id) AS rating,
+         (SELECT COUNT(*) FROM reviews rv WHERE rv.artist_id = u.id) AS review_count
   FROM users u JOIN artist_profiles p ON p.user_id = u.id
-  WHERE u.role = 'artist'
+  WHERE u.role = 'artist' AND u.suspended_at IS NULL
 `;
 
 const listArtists = db.prepare(`${ARTIST_SELECT} ORDER BY like_count DESC, artwork_count DESC, u.created_at ASC`);
@@ -23,7 +25,7 @@ const getArtist = db.prepare(`${ARTIST_SELECT} AND u.id = ?`);
 const galleriesForArtist = db.prepare(`
   SELECT g.id, g.title, g.description, g.created_at,
          (SELECT COUNT(*) FROM artworks a WHERE a.gallery_id = g.id) AS artwork_count,
-         (SELECT a.image_url FROM artworks a WHERE a.gallery_id = g.id ORDER BY a.created_at DESC, a.id DESC LIMIT 1) AS cover_url
+         (SELECT COALESCE(a.thumb_url, a.image_url) FROM artworks a WHERE a.gallery_id = g.id ORDER BY a.created_at DESC, a.id DESC LIMIT 1) AS cover_url
   FROM galleries g WHERE g.artist_id = ? ORDER BY g.created_at DESC, g.id DESC
 `);
 const isFollowing = db.prepare('SELECT 1 FROM follows WHERE follower_id = ? AND artist_id = ?');
@@ -53,6 +55,8 @@ function shapeArtist(row) {
     artwork_count: row.artwork_count,
     follower_count: row.follower_count,
     like_count: row.like_count,
+    rating: row.rating,
+    review_count: row.review_count,
     cover_url: row.cover_url,
   };
 }

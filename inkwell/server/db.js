@@ -12,6 +12,7 @@ fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
+db.pragma('busy_timeout = 5000');
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS users (
@@ -24,6 +25,10 @@ CREATE TABLE IF NOT EXISTS users (
   bio TEXT DEFAULT '',
   location TEXT DEFAULT '',
   email_notifications INTEGER NOT NULL DEFAULT 1,
+  is_admin INTEGER NOT NULL DEFAULT 0,
+  suspended_at TEXT,
+  suspended_reason TEXT,
+  terms_accepted_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -60,6 +65,9 @@ CREATE TABLE IF NOT EXISTS artworks (
   gallery_id INTEGER NOT NULL REFERENCES galleries(id) ON DELETE CASCADE,
   artist_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   image_url TEXT NOT NULL,
+  thumb_url TEXT,
+  width INTEGER,
+  height INTEGER,
   title TEXT NOT NULL,
   description TEXT DEFAULT '',
   style TEXT DEFAULT '',
@@ -179,6 +187,38 @@ CREATE TABLE IF NOT EXISTS email_log (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS reviews (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  appointment_id INTEGER NOT NULL UNIQUE REFERENCES appointments(id) ON DELETE CASCADE,
+  artist_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  client_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+  body TEXT DEFAULT '',
+  artist_reply TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS reports (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  reporter_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  target_type TEXT NOT NULL CHECK (target_type IN ('artwork', 'comment', 'user', 'request', 'review')),
+  target_id INTEGER NOT NULL,
+  reason TEXT NOT NULL,
+  details TEXT DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved', 'dismissed')),
+  resolution TEXT,
+  resolved_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  resolved_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS webhook_events (
+  id TEXT PRIMARY KEY,
+  provider TEXT NOT NULL,
+  type TEXT NOT NULL,
+  received_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -198,6 +238,8 @@ CREATE INDEX IF NOT EXISTS idx_messages_pair ON messages(sender_id, recipient_id
 CREATE INDEX IF NOT EXISTS idx_payments_appt ON payments(appointment_id);
 CREATE INDEX IF NOT EXISTS idx_payments_users ON payments(payer_id, payee_id);
 CREATE INDEX IF NOT EXISTS idx_email_log_user ON email_log(to_user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_reviews_artist ON reviews(artist_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(status, created_at);
 `;
 
 db.exec(SCHEMA);
@@ -211,6 +253,15 @@ ensureColumn('users', 'email_notifications', 'INTEGER NOT NULL DEFAULT 1');
 ensureColumn('artist_profiles', 'deposit_amount', 'INTEGER NOT NULL DEFAULT 0');
 ensureColumn('appointments', 'deposit_amount', 'INTEGER NOT NULL DEFAULT 0');
 ensureColumn('appointments', 'price', 'INTEGER');
+ensureColumn('users', 'is_admin', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('users', 'suspended_at', 'TEXT');
+ensureColumn('users', 'suspended_reason', 'TEXT');
+ensureColumn('users', 'terms_accepted_at', 'TEXT');
+ensureColumn('artworks', 'thumb_url', 'TEXT');
+ensureColumn('artworks', 'width', 'INTEGER');
+ensureColumn('artworks', 'height', 'INTEGER');
+// Indexes on migrated columns must come after the columns exist.
+db.exec('CREATE INDEX IF NOT EXISTS idx_users_suspended ON users(suspended_at)');
 
 /** Lists of styles used for filters and validation. */
 const STYLES = [

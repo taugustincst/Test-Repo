@@ -3,7 +3,8 @@
 const express = require('express');
 const { db, STYLES } = require('../db');
 const { requireAuth, requireRole } = require('../auth');
-const { upload, publicUrl } = require('../upload');
+const { upload } = require('../upload');
+const { processReference } = require('../images');
 const mailer = require('../mailer');
 
 const router = express.Router();
@@ -15,7 +16,7 @@ const REQUEST_SELECT = `
 `;
 
 const getRequest = db.prepare(`${REQUEST_SELECT} WHERE r.id = ?`);
-const listOpen = db.prepare(`${REQUEST_SELECT} WHERE r.status = 'open' ORDER BY r.created_at DESC, r.id DESC`);
+const listOpen = db.prepare(`${REQUEST_SELECT} WHERE r.status = 'open' AND u.suspended_at IS NULL ORDER BY r.created_at DESC, r.id DESC`);
 const listForClient = db.prepare(`${REQUEST_SELECT} WHERE r.client_id = ? ORDER BY r.created_at DESC, r.id DESC`);
 const listForArtist = db.prepare(`
   ${REQUEST_SELECT}
@@ -81,7 +82,7 @@ router.get('/', (req, res) => {
   res.json({ requests: rows.map((r) => shape(r, req.user)), styles: STYLES });
 });
 
-router.post('/', requireRole('client'), upload.single('reference'), (req, res) => {
+router.post('/', requireRole('client'), upload.single('reference'), async (req, res) => {
   const body = req.body || {};
   const title = String(body.title || '').trim();
   const description = String(body.description || '').trim();
@@ -91,6 +92,10 @@ router.post('/', requireRole('client'), upload.single('reference'), (req, res) =
   const budgetMax = money(body.budget_max);
   if (budgetMin !== null && budgetMax !== null && budgetMin > budgetMax) {
     return res.status(400).json({ error: 'Minimum budget cannot exceed the maximum.' });
+  }
+  let referenceUrl = null;
+  if (req.file) {
+    try { referenceUrl = await processReference(req.file); } catch (err) { return res.status(400).json({ error: err.message }); }
   }
   const info = insertRequest.run({
     client_id: req.user.id,
@@ -102,7 +107,7 @@ router.post('/', requireRole('client'), upload.single('reference'), (req, res) =
     budget_min: budgetMin,
     budget_max: budgetMax,
     location: String(body.location || req.user.location || '').slice(0, 120),
-    reference_image_url: req.file ? publicUrl(req.file.filename) : null,
+    reference_image_url: referenceUrl,
   });
   res.status(201).json({ request: shape(getRequest.get(info.lastInsertRowid), req.user) });
 });

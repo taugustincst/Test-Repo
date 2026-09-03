@@ -3,7 +3,7 @@
 const express = require('express');
 const { db } = require('../db');
 const { requireAuth } = require('../auth');
-const { provider } = require('../payments');
+const { provider, verifyStripeWebhook } = require('../payments');
 const ledger = require('../ledger');
 const mailer = require('../mailer');
 
@@ -80,8 +80,8 @@ router.post('/:id/checkout', requireAuth, async (req, res) => {
     const { url } = await provider.createCheckout({
       amount: payment.amount,
       description: `${payment.kind === 'deposit' ? 'Deposit' : 'Balance'} for tattoo session with ${payment.artist_name}`,
-      successUrl: `${base}/#/payments/return?payment=${payment.id}&session_id={CHECKOUT_SESSION_ID}`,
-      cancelUrl: `${base}/#/appointments`,
+      successUrl: `${base}/payments/return?payment=${payment.id}&session_id={CHECKOUT_SESSION_ID}`,
+      cancelUrl: `${base}/appointments`,
       reference: payment.id,
     });
     res.json({ url });
@@ -108,6 +108,38 @@ router.post('/:id/confirm', requireAuth, async (req, res) => {
   } catch (err) {
     res.status(502).json({ error: `Could not verify payment: ${err.message}` });
   }
+});
+
+/**
+ * Stripe webhook. Mounted with a raw body parser in index.js so the signature can be verified.
+ * Handles checkout.session.completed so a payment is recorded even if the client never returns.
+ */
+const insertEvent = db.prepare('INSERT OR IGNORE INTO webhook_events (id, provider, type) VALUES (?, ?, ?)');
+const pendingByRef = db.prepare(`SELECT * FROM payments WHERE id = ? AND status = 'pending'`);
+
+router.post('/webhook/stripe', (req, res) => {
+  let event;
+  try {
+    event = verifyStripeWebhook(req.body, req.get('stripe-signature'), process.env.STRIPE_WEBHOOK_SECRET);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+  if (!event || !event.id || !event.type) return res.status(400).json({ error: 'Malformed event.' });
+  const fresh = insertEvent.run(event.id, 'stripe', event.type).changes === 1;
+  if (!fresh) return res.json({ received: true, duplicate: true });
+
+  if (event.type === 'checkout.session.completed' || event.type === 'checkout.session.async_payment_succeeded') {
+    const session = event.data && event.data.object;
+    const paymentId = session && Number(session.client_reference_id);
+    if (session && session.payment_status === 'paid' && paymentId) {
+      const payment = pendingByRef.get(paymentId);
+      if (payment) {
+        ledger.markPaid(payment.id, { providerName: 'stripe', providerRef: session.payment_intent, last4: null });
+        afterPaid(payment.id);
+      }
+    }
+  }
+  res.json({ received: true });
 });
 
 module.exports = router;

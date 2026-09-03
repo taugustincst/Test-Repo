@@ -14,6 +14,8 @@ process.env.INKWELL_UPLOAD_DIR = path.join(tmp, 'uploads');
 
 const { createApp } = require('../server/index');
 const { seed, DEMO_PASSWORD } = require('../server/seed');
+const sharp = require('sharp');
+const png = (w = 24, h = 32, bg = '#d4553f') => sharp({ create: { width: w, height: h, channels: 3, background: bg } }).png().toBuffer();
 
 let server;
 let base;
@@ -92,11 +94,13 @@ test('registration validation and session lifecycle', async () => {
   assert.equal(r.status, 400);
 
   r = await c.post('/api/auth/register', { email: 'new.artist@example.com', password: 'supersecret', name: 'New Artist', role: 'artist', styles: ['Realism', 'Not A Style'] });
+  assert.equal(r.status, 400, 'terms must be accepted');
+  r = await c.post('/api/auth/register', { email: 'new.artist@example.com', password: 'supersecret', name: 'New Artist', role: 'artist', styles: ['Realism', 'Not A Style'], accept_terms: true });
   assert.equal(r.status, 201);
   assert.equal(r.data.user.role, 'artist');
   assert.deepEqual(r.data.user.profile.styles, ['Realism']);
 
-  r = await c.post('/api/auth/register', { email: 'NEW.ARTIST@example.com', password: 'supersecret', name: 'Dup', role: 'artist' });
+  r = await c.post('/api/auth/register', { email: 'NEW.ARTIST@example.com', password: 'supersecret', name: 'Dup', role: 'artist', accept_terms: true });
   assert.equal(r.status, 409);
 
   r = await c.get('/api/auth/me');
@@ -127,7 +131,7 @@ test('artist creates a gallery, uploads artwork, others like and comment', async
   const galleryId = r.data.gallery.id;
 
   const form = new FormData();
-  form.append('image', new Blob(['<svg xmlns="http://www.w3.org/2000/svg"/>'], { type: 'image/svg+xml' }), 'piece.svg');
+  form.append('image', new Blob([await png()], { type: 'image/png' }), 'piece.png');
   form.append('title', 'Uploaded piece');
   form.append('style', 'Blackwork');
   form.append('placement', 'Forearm');
@@ -136,6 +140,10 @@ test('artist creates a gallery, uploads artwork, others like and comment', async
   const artworkId = r.data.artwork.id;
   assert.equal(r.data.artwork.style, 'Blackwork');
   assert.ok(fs.existsSync(path.join(process.env.INKWELL_UPLOAD_DIR, path.basename(r.data.artwork.image_url))));
+  assert.match(r.data.artwork.image_url, /\.webp$/, 'uploads are re-encoded');
+  assert.match(r.data.artwork.thumb_url, /\.thumb\.webp$/);
+  assert.equal(r.data.artwork.width, 24);
+  assert.equal(r.data.artwork.height, 32);
 
   const badForm = new FormData();
   badForm.append('image', new Blob(['hello'], { type: 'text/plain' }), 'notes.txt');
@@ -350,7 +358,7 @@ test('profile updates', async () => {
 test('SPA fallback serves index.html and unknown API routes 404 as JSON', async () => {
   const res = await fetch(`${base}/artists/3`);
   assert.equal(res.status, 200);
-  assert.match(await res.text(), /<title>Inkwell/);
+  assert.match(await res.text(), /<title>[^<]*Inkwell/);
   const api = await fetch(`${base}/api/nope`);
   assert.equal(api.status, 404);
   assert.equal((await api.json()).error, 'Not found.');

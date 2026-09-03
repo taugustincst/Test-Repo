@@ -1,0 +1,35 @@
+name: CI
+on:
+  push:
+    paths: ['inkwell/**', '.github/workflows/ci.yml']
+  pull_request:
+    paths: ['inkwell/**', '.github/workflows/ci.yml']
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: inkwell
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: inkwell/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run check
+  docker:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t inkwell:ci inkwell
+      - name: Smoke test container
+        run: |
+          docker run -d --name inkwell -p 3000:3000 -e INKWELL_SKIP_SEED=0 inkwell:ci
+          for i in $(seq 1 20); do curl -fs http://localhost:3000/api/health && break; sleep 1; done
+          curl -fs http://localhost:3000/api/health | grep '"ok":true'
+          docker rm -f inkwell

@@ -282,8 +282,8 @@ function seed() {
 
   const passwordHash = hashPassword(DEMO_PASSWORD);
   const insertUser = db.prepare(`
-    INSERT INTO users (email, password_hash, name, role, avatar_url, bio, location, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', ?))
+    INSERT INTO users (email, password_hash, name, role, avatar_url, bio, location, terms_accepted_at, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now', ?))
   `);
   const insertProfile = db.prepare(`
     INSERT INTO artist_profiles (user_id, studio_name, styles, hourly_rate, min_price, session_minutes, years_experience, instagram, website, accepting_clients, deposit_amount)
@@ -358,6 +358,11 @@ function seed() {
       clientIds.push(Number(info.lastInsertRowid));
     });
 
+    // A moderator account for the admin panel.
+    const adminAvatar = writeSvg('seed-admin.svg', makeAvatar('Ada Moderator', 4));
+    const adminId = Number(insertUser.run('admin@inkwell.demo', passwordHash, 'Ada Moderator', 'client', adminAvatar, 'Keeps Inkwell tidy.', 'Remote', '-200 days').lastInsertRowid);
+    db.prepare('UPDATE users SET is_admin = 1 WHERE id = ?').run(adminId);
+
     const everyone = [...artistIds, ...clientIds];
     artworkIds.forEach((artworkId) => {
       const likers = everyone.filter(() => rand() < 0.45);
@@ -425,7 +430,7 @@ function seed() {
   });
 
   run();
-  console.log(`Seeded ${ARTISTS.length} artists and ${CLIENTS.length} clients. Every demo account uses the password "${DEMO_PASSWORD}".`);
+  console.log(`Seeded ${ARTISTS.length} artists, ${CLIENTS.length} clients and an admin (admin@inkwell.demo). Every demo account uses the password "${DEMO_PASSWORD}".`);
 }
 
 if (require.main === module) seed();

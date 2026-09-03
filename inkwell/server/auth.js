@@ -8,7 +8,8 @@ const COOKIE_NAME = 'inkwell_session';
 const SESSION_DAYS = 30;
 
 const getUserByToken = db.prepare(`
-  SELECT u.id, u.email, u.name, u.role, u.avatar_url, u.bio, u.location, u.email_notifications, u.created_at
+  SELECT u.id, u.email, u.name, u.role, u.avatar_url, u.bio, u.location, u.email_notifications,
+         u.is_admin, u.suspended_at, u.suspended_reason, u.created_at
   FROM sessions s JOIN users u ON u.id = s.user_id
   WHERE s.token = ? AND s.created_at > datetime('now', ?)
 `);
@@ -20,6 +21,8 @@ const getProfile = db.prepare('SELECT * FROM artist_profiles WHERE user_id = ?')
 function withProfile(user) {
   if (!user) return user;
   user.email_notifications = user.email_notifications !== 0;
+  user.is_admin = user.is_admin === 1 || user.is_admin === true;
+  user.suspended = !!user.suspended_at;
   if (user.role === 'artist') {
     const profile = getProfile.get(user.id) || {};
     user.profile = {
@@ -58,19 +61,29 @@ function loadUser(req, _res, next) {
   next();
 }
 
+const SUSPENDED_MESSAGE = 'This account is suspended. Contact support if you think this is a mistake.';
+
 function requireAuth(req, res, next) {
   if (!req.user) return res.status(401).json({ error: 'You need to be signed in to do that.' });
+  if (req.user.suspended) return res.status(403).json({ error: SUSPENDED_MESSAGE, suspended: true });
   next();
 }
 
 function requireRole(role) {
   return (req, res, next) => {
     if (!req.user) return res.status(401).json({ error: 'You need to be signed in to do that.' });
+    if (req.user.suspended) return res.status(403).json({ error: SUSPENDED_MESSAGE, suspended: true });
     if (req.user.role !== role) {
       return res.status(403).json({ error: `Only ${role}s can do that.` });
     }
     next();
   };
+}
+
+function requireAdmin(req, res, next) {
+  if (!req.user) return res.status(401).json({ error: 'You need to be signed in to do that.' });
+  if (!req.user.is_admin || req.user.suspended) return res.status(403).json({ error: 'Admins only.' });
+  next();
 }
 
 function createSession(res, userId) {
@@ -101,9 +114,11 @@ function verifyPassword(password, hash) {
 
 module.exports = {
   COOKIE_NAME,
+  SUSPENDED_MESSAGE,
   loadUser,
   requireAuth,
   requireRole,
+  requireAdmin,
   createSession,
   destroySession,
   hashPassword,

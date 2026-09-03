@@ -327,3 +327,16 @@ select option { background: var(--bg-elev); color: var(--text); }
 .filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 20px; }
 .filters input, .filters select { padding: 9px 12px; border-radius: 999px; border: 1px solid var(--line-strong); background: var(--bg-elev); color: var(--text); }
 .filters input { min-width: 200px; }
+
+/* Reviews, moderation, legal */
+.stars { color: var(--line-strong); letter-spacing: 1px; font-size: 0.95rem; line-height: 1; }
+.stars .on { color: var(--gold); }
+.star-picker { display: flex; gap: 4px; }
+.star-picker button { background: none; border: 0; font-size: 2rem; line-height: 1; color: var(--line-strong); cursor: pointer; padding: 0 2px; }
+.star-picker button.on { color: var(--gold); }
+.review__reply { margin-top: 10px; padding: 10px 14px; border-left: 3px solid var(--line-strong); background: var(--bg); border-radius: 0 10px 10px 0; }
+.banner { padding: 12px 20px; text-align: center; font-size: 0.9rem; }
+.banner--danger { background: var(--red-soft); color: var(--accent); border-bottom: 1px solid rgba(212, 85, 63, 0.35); }
+.legal h3 { margin-top: 26px; }
+.legal p { color: var(--text-muted); }
+.list-item .btn { flex-shrink: 0; }
