@@ -88,6 +88,27 @@ function originCheck(allowedOrigins) {
   };
 }
 
+/**
+ * CORS for the native shell and any extra origins in CORS_ORIGINS. Only listed origins get
+ * headers; browsers block everything else. Credentials are allowed so cookies work in webviews.
+ */
+function cors(allowedOrigins) {
+  const allowed = new Set(allowedOrigins.filter(Boolean));
+  return (req, res, next) => {
+    const origin = req.get('origin');
+    if (origin && allowed.has(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Inkwell-Client');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+      res.setHeader('Access-Control-Max-Age', '600');
+      if (req.method === 'OPTIONS') return res.status(204).end();
+    }
+    next();
+  };
+}
+
 /** One line per request. JSON when LOG_FORMAT=json so log shippers can parse it. */
 function requestLogger() {
   const json = process.env.LOG_FORMAT === 'json';
@@ -104,4 +125,4 @@ function requestLogger() {
   };
 }
 
-module.exports = { securityHeaders, uploadHeaders, rateLimit, originCheck, requestLogger, CSP };
+module.exports = { securityHeaders, uploadHeaders, rateLimit, originCheck, cors, requestLogger, CSP };

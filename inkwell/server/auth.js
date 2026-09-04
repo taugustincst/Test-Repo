@@ -8,7 +8,7 @@ const COOKIE_NAME = 'inkwell_session';
 const SESSION_DAYS = 30;
 
 const getUserByToken = db.prepare(`
-  SELECT u.id, u.email, u.name, u.role, u.avatar_url, u.bio, u.location, u.email_notifications,
+  SELECT u.id, u.email, u.name, u.role, u.avatar_url, u.bio, u.location, u.email_notifications, u.push_notifications,
          u.is_admin, u.suspended_at, u.suspended_reason, u.created_at
   FROM sessions s JOIN users u ON u.id = s.user_id
   WHERE s.token = ? AND s.created_at > datetime('now', ?)
@@ -21,6 +21,7 @@ const getProfile = db.prepare('SELECT * FROM artist_profiles WHERE user_id = ?')
 function withProfile(user) {
   if (!user) return user;
   user.email_notifications = user.email_notifications !== 0;
+  user.push_notifications = user.push_notifications !== 0;
   user.is_admin = user.is_admin === 1 || user.is_admin === true;
   user.suspended = !!user.suspended_at;
   if (user.role === 'artist') {
@@ -50,10 +51,23 @@ function safeParse(json, fallback) {
   }
 }
 
-/** Express middleware: loads req.user from the session cookie if present. */
+/** Native apps send the session token as a bearer header instead of a cookie. */
+function tokenFrom(req) {
+  const header = req.get && req.get('authorization');
+  if (header && /^Bearer\s+/i.test(header)) return header.replace(/^Bearer\s+/i, '').trim();
+  return req.cookies && req.cookies[COOKIE_NAME];
+}
+
+/** True when the caller is the native mobile shell and wants the token in the JSON response. */
+function wantsToken(req) {
+  return (req.get('x-inkwell-client') || '').toLowerCase() === 'native';
+}
+
+/** Express middleware: loads req.user from the bearer token or session cookie if present. */
 function loadUser(req, _res, next) {
-  const token = req.cookies && req.cookies[COOKIE_NAME];
+  const token = tokenFrom(req);
   req.user = null;
+  req.authToken = token || null;
   if (token) {
     const user = getUserByToken.get(token, `-${SESSION_DAYS} days`);
     if (user) req.user = withProfile(user);
@@ -99,7 +113,7 @@ function createSession(res, userId) {
 }
 
 function destroySession(req, res) {
-  const token = req.cookies && req.cookies[COOKIE_NAME];
+  const token = tokenFrom(req);
   if (token) deleteSession.run(token);
   res.clearCookie(COOKIE_NAME);
 }
@@ -116,6 +130,8 @@ module.exports = {
   COOKIE_NAME,
   SUSPENDED_MESSAGE,
   loadUser,
+  tokenFrom,
+  wantsToken,
   requireAuth,
   requireRole,
   requireAdmin,

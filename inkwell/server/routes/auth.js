@@ -5,7 +5,7 @@ const crypto = require('crypto');
 const { db, STYLES } = require('../db');
 const mailer = require('../mailer');
 const {
-  COOKIE_NAME, SUSPENDED_MESSAGE, createSession, destroySession, hashPassword, verifyPassword, withProfile, requireAuth,
+  COOKIE_NAME, SUSPENDED_MESSAGE, createSession, destroySession, hashPassword, verifyPassword, withProfile, requireAuth, wantsToken,
 } = require('../auth');
 const { upload, removeByUrl } = require('../upload');
 const { processAvatar } = require('../images');
@@ -17,7 +17,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const findByEmail = db.prepare('SELECT * FROM users WHERE email = ?');
 const findById = db.prepare(`
-  SELECT id, email, name, role, avatar_url, bio, location, email_notifications, is_admin, suspended_at, suspended_reason, terms_accepted_at, created_at
+  SELECT id, email, name, role, avatar_url, bio, location, email_notifications, push_notifications, is_admin, suspended_at, suspended_reason, terms_accepted_at, created_at
   FROM users WHERE id = ?
 `);
 const insertUser = db.prepare(`
@@ -64,10 +64,10 @@ router.post('/register', (req, res) => {
   });
 
   const userId = create();
-  createSession(res, userId);
+  const token = createSession(res, userId);
   const user = withProfile(findById.get(userId));
   mailer.notify(mailer.templates.welcome(user));
-  res.status(201).json({ user });
+  res.status(201).json(wantsToken(req) ? { user, token } : { user });
 });
 
 router.post('/login', (req, res) => {
@@ -77,8 +77,10 @@ router.post('/login', (req, res) => {
     return res.status(401).json({ error: 'Incorrect email or password.' });
   }
   if (user.suspended_at) return res.status(403).json({ error: SUSPENDED_MESSAGE, suspended: true });
-  createSession(res, user.id);
-  res.json({ user: withProfile(findById.get(user.id)) });
+  const token = createSession(res, user.id);
+  const payload = { user: withProfile(findById.get(user.id)) };
+  if (wantsToken(req)) payload.token = token;
+  res.json(payload);
 });
 
 router.post('/logout', (req, res) => {
@@ -97,7 +99,7 @@ router.get('/me', (req, res) => {
 });
 
 const updateUser = db.prepare(`
-  UPDATE users SET name = @name, bio = @bio, location = @location, email_notifications = @email_notifications WHERE id = @id
+  UPDATE users SET name = @name, bio = @bio, location = @location, email_notifications = @email_notifications, push_notifications = @push_notifications WHERE id = @id
 `);
 const upsertProfile = db.prepare(`
   INSERT INTO artist_profiles
@@ -138,6 +140,9 @@ router.put('/me', requireAuth, (req, res) => {
       email_notifications: body.email_notifications === undefined
         ? (req.user.email_notifications === false ? 0 : 1)
         : (body.email_notifications ? 1 : 0),
+      push_notifications: body.push_notifications === undefined
+        ? (req.user.push_notifications === false ? 0 : 1)
+        : (body.push_notifications ? 1 : 0),
     });
     if (req.user.role === 'artist') {
       const current = req.user.profile;
@@ -190,7 +195,7 @@ router.put('/me/password', requireAuth, (req, res) => {
   const problem = passwordProblem(new_password);
   if (problem) return res.status(400).json({ error: problem.replace('Password', 'New password') });
   updatePassword.run(hashPassword(String(new_password)), user.id);
-  deleteOtherSessions.run(user.id, req.cookies[COOKIE_NAME]);
+  deleteOtherSessions.run(user.id, req.authToken);
   voidResets.run(user.id);
   mailer.notify(mailer.templates.passwordChanged(user));
   res.json({ ok: true });
@@ -224,10 +229,10 @@ router.post('/reset', (req, res) => {
     useReset.run(reset.id);
     deleteAllSessions.run(reset.user_id);
   })();
-  createSession(res, reset.user_id);
+  const sessionToken = createSession(res, reset.user_id);
   const user = withProfile(findById.get(reset.user_id));
   mailer.notify(mailer.templates.passwordChanged(user));
-  res.json({ user });
+  res.json(wantsToken(req) ? { user, token: sessionToken } : { user });
 });
 
 /** Recent emails sent to the signed-in user (handy when no SMTP server is configured). */

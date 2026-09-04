@@ -72,6 +72,11 @@ function layout(title, paragraphs, cta) {
 async function send({ to, subject, title, paragraphs, cta, force = false }) {
   const user = typeof to === 'object' ? to : getUser.get(to);
   if (!user) return null;
+  // Every non-account email is also an in-app notification and, where the user opted in, a push.
+  if (!force) {
+    const push = require('./push');
+    push.deliver(user.id, { title, body: paragraphs[0] || '', url: cta ? cta.url : null }).catch((err) => console.error('[push]', err.message));
+  }
   const text = `${title}\n\n${paragraphs.join('\n\n')}${cta ? `\n\n${cta.label}: ${cta.url}` : ''}\n`;
   const html = layout(title, paragraphs, cta);
   const record = { to_user_id: user.id, to_email: user.email, subject, body_text: text, body_html: html, status: 'logged', error: null };

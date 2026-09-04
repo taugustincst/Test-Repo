@@ -92,6 +92,8 @@ p { margin: 0 0 1em; }
 .nav a:hover, .nav button:hover { color: var(--text); background: var(--bg-elev); }
 .nav a.active { color: var(--text); background: var(--bg-elev-2); }
 .nav .btn { color: #fff; }
+.nav .nav-label { display: none; }
+@media (max-width: 820px) { .nav .nav-label { display: inline; } }
 .nav-avatar { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; border: 1px solid var(--line-strong); }
 .badge-dot { position: absolute; top: 6px; right: 6px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px; background: var(--accent); color: #fff; font-size: 10px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; }
 .nav-toggle { display: none; margin-left: auto; background: none; border: 0; cursor: pointer; padding: 8px; }
@@ -340,3 +342,28 @@ select option { background: var(--bg-elev); color: var(--text); }
 .legal h3 { margin-top: 26px; }
 .legal p { color: var(--text-muted); }
 .list-item .btn { flex-shrink: 0; }
+
+/* Mobile app layer: bottom tab bar, safe areas, touch targets, install banner */
+.tabbar { display: none; }
+.notif { display: block; }
+.notif--unread { border-color: var(--accent); background: linear-gradient(90deg, var(--accent-soft), transparent 40%), var(--bg-elev); }
+.install-banner { display: flex; align-items: center; gap: 14px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg-elev); margin: 0 0 20px; }
+.install-banner img { border-radius: 10px; }
+.install-banner > div { flex: 1; min-width: 0; }
+@media (max-width: 820px) {
+  .main { padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
+  .footer { padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
+  .topbar { padding-top: env(safe-area-inset-top); }
+  .tabbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 45; display: grid; grid-template-columns: repeat(5, 1fr); background: rgba(14, 14, 16, 0.94); backdrop-filter: blur(14px); border-top: 1px solid var(--line); padding: 6px 4px calc(6px + env(safe-area-inset-bottom)); }
+  .tabbar a, .tabbar button { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; min-height: 52px; color: var(--text-faint); font-size: 0.68rem; letter-spacing: 0.02em; background: none; border: 0; border-radius: 10px; cursor: pointer; }
+  .tabbar svg { width: 22px; height: 22px; }
+  .tabbar .active { color: var(--text); }
+  .tabbar .active svg { color: var(--accent); }
+  .tabbar .badge-dot { top: 2px; right: calc(50% - 20px); }
+  .nav { top: calc(62px + env(safe-area-inset-top)); max-height: calc(100vh - 62px - 84px); overflow-y: auto; }
+  .btn, .chip, .slot, .date-strip button, .tabs button, .convo { min-height: 44px; }
+  .toast-root { bottom: calc(92px + env(safe-area-inset-bottom)); }
+  .modal { max-height: calc(100vh - 20px); }
+}
+@media (display-mode: standalone) { .topbar { position: sticky; } }
+html.native .install-banner { display: none; }
