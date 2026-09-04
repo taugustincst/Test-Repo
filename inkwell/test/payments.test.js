@@ -304,7 +304,7 @@ test('email notifications: logged when on, skipped when off, account mail always
   assert.equal(r.data.live, false);
 
   const fresh = client();
-  r = await fresh.post('/api/auth/register', { email: 'optin@example.com', password: 'password123', name: 'Opt In', role: 'client' });
+  r = await fresh.post('/api/auth/register', { email: 'optin@example.com', password: 'password123', name: 'Opt In', role: 'client', accept_terms: true });
   const id = r.data.user.id;
   await fresh.put('/api/auth/me', { email_notifications: false });
   await fresh.post('/api/auth/forgot', { email: 'optin@example.com' });

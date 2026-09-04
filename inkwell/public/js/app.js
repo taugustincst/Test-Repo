@@ -79,9 +79,26 @@
 
   function onCleanup(fn) { cleanupFns.push(fn); }
 
+  function navigate(path, { replace = false } = {}) {
+    if (path === location.pathname + location.search) { route(); return; }
+    history[replace ? 'replaceState' : 'pushState']({}, '', path);
+    route();
+  }
+
+  function renderBanner() {
+    const el = document.getElementById('banner');
+    if (state.user && state.user.suspended) {
+      el.innerHTML = `<div class="banner banner--danger"><strong>Your account is suspended.</strong> ${esc(state.user.suspended_reason || '')} You can browse, but you cannot post, book or message. Contact support if you think this is a mistake.</div>`;
+    } else if (state.user && state.user.is_admin && location.pathname.startsWith('/admin')) {
+      el.innerHTML = '';
+    } else {
+      el.innerHTML = '';
+    }
+  }
+
   function requireLogin(next) {
     if (state.user) return true;
-    location.hash = `#/login?next=${encodeURIComponent(next || location.hash)}`;
+    navigate(`/login?next=${encodeURIComponent(next || location.pathname + location.search)}`);
     return false;
   }
 
@@ -116,7 +133,7 @@
   function artCard(a) {
     return `
       <article class="art" data-artwork="${a.id}">
-        <img src="${attr(a.image_url)}" alt="${attr(a.title)}" loading="lazy">
+        <img src="${attr(a.thumb_url || a.image_url)}" alt="${attr(a.title)}" loading="lazy" ${a.width && a.height ? `width="${a.width}" height="${a.height}"` : ''}>
         <div class="art__body">
           <div class="art__title"><span>${esc(a.title)}</span><span class="art__likes${a.liked ? ' liked' : ''}">♥ ${a.like_count}</span></div>
           <div class="art__meta">${avatar(a.artist_avatar_url, a.artist_name, 'avatar--xs')}<span>${esc(a.artist_name)}</span>${a.style ? `<span class="tag">${esc(a.style)}</span>` : ''}</div>
@@ -136,7 +153,7 @@
           <div class="modal__head">
             <div>
               <h3 style="margin:0">${esc(artwork.title)}</h3>
-              <a href="#/artists/${artwork.artist_id}" class="row muted small" style="margin-top:6px" data-close-modal>${avatar(artwork.artist_avatar_url, artwork.artist_name, 'avatar--xs')} ${esc(artwork.artist_name)} · ${esc(artwork.gallery_title)}</a>
+              <a href="/artists/${artwork.artist_id}" class="row muted small" style="margin-top:6px" data-close-modal>${avatar(artwork.artist_avatar_url, artwork.artist_name, 'avatar--xs')} ${esc(artwork.artist_name)} · ${esc(artwork.gallery_title)}</a>
             </div>
             <button class="modal__close" data-close-modal aria-label="Close">×</button>
           </div>
@@ -149,9 +166,10 @@
             ${artwork.description ? `<p class="muted">${esc(artwork.description)}</p>` : ''}
             <div class="row" style="margin-bottom:16px">
               <button class="like-btn${artwork.liked ? ' liked' : ''}" data-like>♥ <span>${artwork.like_count}</span></button>
-              ${me && me.id !== artwork.artist_id ? `<a class="btn btn--ghost btn--sm" href="#/messages/${artwork.artist_id}" data-close-modal>Message artist</a>` : ''}
-              ${me && me.role === 'client' ? `<a class="btn btn--sm" href="#/book/${artwork.artist_id}" data-close-modal>Book ${esc(artwork.artist_name.split(' ')[0])}</a>` : ''}
+              ${me && me.id !== artwork.artist_id ? `<a class="btn btn--ghost btn--sm" href="/messages/${artwork.artist_id}" data-close-modal>Message artist</a>` : ''}
+              ${me && me.role === 'client' ? `<a class="btn btn--sm" href="/book/${artwork.artist_id}" data-close-modal>Book ${esc(artwork.artist_name.split(' ')[0])}</a>` : ''}
               ${canEdit ? '<button class="btn btn--danger btn--sm" data-delete-art>Delete</button>' : ''}
+              ${me && !canEdit ? '<button class="link small" data-report-art>Report</button>' : ''}
             </div>
             <h4 style="margin-bottom:4px">Comments (${artwork.comments.length})</h4>
             <div data-comments>
@@ -160,13 +178,14 @@
                   ${avatar(c.user_avatar_url, c.user_name, 'avatar--sm')}
                   <div class="comment__body">
                     <div class="comment__meta"><strong style="color:var(--text)">${esc(c.user_name)}</strong><span>${timeAgo(c.created_at)}</span>
-                      ${me && (me.id === c.user_id || canEdit) ? `<button class="link" data-del-comment="${c.id}">delete</button>` : ''}</div>
+                      ${me && (me.id === c.user_id || canEdit) ? `<button class="link" data-del-comment="${c.id}">delete</button>` : ''}
+                      ${me && me.id !== c.user_id ? `<button class="link" data-report-comment="${c.id}">report</button>` : ''}</div>
                     <div>${esc(c.body)}</div>
                   </div>
                 </div>`).join('') : '<p class="faint small">No comments yet.</p>'}
             </div>
             ${me ? `<form class="row" data-comment-form style="margin-top:10px"><input name="body" placeholder="Add a comment" required style="flex:1;padding:10px 14px;border-radius:999px;border:1px solid var(--line-strong);background:var(--bg);color:var(--text)"><button class="btn btn--sm">Post</button></form>`
-              : '<p class="faint small" style="margin-top:10px"><a class="link" href="#/login" data-close-modal>Sign in</a> to like or comment.</p>'}
+              : '<p class="faint small" style="margin-top:10px"><a class="link" href="/login" data-close-modal>Sign in</a> to like or comment.</p>'}
           </div>
         </div>`);
 
@@ -193,6 +212,9 @@
       $$('[data-del-comment]', modal).forEach((b) => b.addEventListener('click', async () => {
         try { const r = await api.del(`/api/comments/${b.dataset.delComment}`); artwork.comments = r.comments; render(); } catch (err) { handleError(err); }
       }));
+      const rep = $('[data-report-art]', modal);
+      if (rep) rep.addEventListener('click', () => reportModal('artwork', artwork.id, 'artwork'));
+      $$('[data-report-comment]', modal).forEach((b) => b.addEventListener('click', () => reportModal('comment', Number(b.dataset.reportComment), 'comment')));
       const del = $('[data-delete-art]', modal);
       if (del) del.addEventListener('click', async () => {
         if (!confirm('Delete this artwork? This cannot be undone.')) return;
@@ -210,29 +232,30 @@
   /* ---------- nav ---------- */
 
   function renderNav() {
-    const path = location.hash.replace(/^#/, '') || '/';
+    const path = location.pathname || '/';
     const active = (p) => (path === p || (p !== '/' && path.startsWith(p)) ? 'active' : '');
     const u = state.user;
     navEl.innerHTML = `
-      <a href="#/" class="${active('/')}">Explore</a>
-      <a href="#/artists" class="${active('/artists')}">Artists</a>
-      <a href="#/requests" class="${active('/requests')}">Client requests</a>
+      <a href="/" class="${active('/')}">Explore</a>
+      <a href="/artists" class="${active('/artists')}">Artists</a>
+      <a href="/requests" class="${active('/requests')}">Client requests</a>
       ${u ? `
-        <a href="#/messages" class="${active('/messages')}">Messages${state.unread ? `<span class="badge-dot">${state.unread}</span>` : ''}</a>
-        <a href="#/appointments" class="${active('/appointments')}">Bookings</a>
-        <a href="#/dashboard" class="${active('/dashboard')}">Dashboard</a>
-        <a href="#/settings" class="${active('/settings')}" title="Settings">${avatar(u.avatar_url, u.name, 'nav-avatar')} <span>${esc(u.name.split(' ')[0])}</span></a>
+        <a href="/messages" class="${active('/messages')}">Messages${state.unread ? `<span class="badge-dot">${state.unread}</span>` : ''}</a>
+        <a href="/appointments" class="${active('/appointments')}">Bookings</a>
+        <a href="/dashboard" class="${active('/dashboard')}">Dashboard</a>
+        ${u.is_admin ? `<a href="/admin" class="${active('/admin')}">Admin</a>` : ''}
+        <a href="/settings" class="${active('/settings')}" title="Settings">${avatar(u.avatar_url, u.name, 'nav-avatar')} <span>${esc(u.name.split(' ')[0])}</span></a>
         <button data-logout>Log out</button>
       ` : `
-        <a href="#/login" class="${active('/login')}">Log in</a>
-        <a href="#/register" class="btn btn--sm">Join Inkwell</a>
+        <a href="/login" class="${active('/login')}">Log in</a>
+        <a href="/register" class="btn btn--sm">Join Inkwell</a>
       `}`;
     const logout = navEl.querySelector('[data-logout]');
     if (logout) logout.addEventListener('click', async () => {
       await api.post('/api/auth/logout');
       state.user = null; state.unread = 0;
       toast('Signed out');
-      location.hash = '#/';
+      navigate('/');
       renderNav();
     });
     navEl.classList.remove('open');
@@ -256,6 +279,61 @@
 
   function loading() { main.innerHTML = '<div class="loading">Loading</div>'; }
 
+  const REPORT_REASONS = [['spam', 'Spam or advertising'], ['harassment', 'Harassment or bullying'], ['hate', 'Hate or discrimination'], ['nudity', 'Sexual content'], ['copyright', 'Stolen or copied work'], ['scam', 'Scam or fraud'], ['other', 'Something else']];
+
+  function reportModal(targetType, targetId, label) {
+    if (!requireLogin()) return;
+    const modal = openModal(`
+      <div class="modal__panel">
+        <div class="modal__head"><h3 style="margin:0">Report ${esc(label || targetType)}</h3><button class="modal__close" data-close-modal>×</button></div>
+        <form class="form modal__body" data-form>
+          <div class="error" hidden></div>
+          <div class="field"><label>Reason</label><select name="reason" required>${REPORT_REASONS.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select></div>
+          <div class="field"><label>Details (optional)</label><textarea name="details" placeholder="Anything that helps a moderator understand the problem."></textarea></div>
+          <button class="btn btn--block">Send report</button>
+          <p class="faint small" style="margin:0">Reports are reviewed by moderators. The person you report is not told who reported them.</p>
+        </form>
+      </div>`, { small: true });
+    const form = $('[data-form]', modal);
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try { await api.post('/api/reports', { target_type: targetType, target_id: targetId, ...formData(form) }); closeModal(); toast('Thanks, a moderator will take a look'); } catch (err) { handleError(err, $('.error', form)); }
+    });
+  }
+
+  function stars(rating, { size = '' } = {}) {
+    const r = Number(rating) || 0;
+    return `<span class="stars ${size}" aria-label="${r} out of 5">${[1, 2, 3, 4, 5].map((i) => `<span class="${i <= Math.round(r) ? 'on' : ''}">★</span>`).join('')}</span>`;
+  }
+
+  function ratingLine(a) {
+    if (!a.review_count) return '<span class="faint small">No reviews yet</span>';
+    return `<span class="row" style="gap:6px">${stars(a.rating)}<span class="small muted">${a.rating} · ${a.review_count} review${a.review_count === 1 ? '' : 's'}</span></span>`;
+  }
+
+  function reviewModal(apptId, reload) {
+    let rating = 5;
+    const modal = openModal(`
+      <div class="modal__panel">
+        <div class="modal__head"><h3 style="margin:0">How was your session?</h3><button class="modal__close" data-close-modal>×</button></div>
+        <form class="form modal__body" data-form>
+          <div class="error" hidden></div>
+          <div class="field"><span class="label">Rating</span><div class="star-picker" data-picker>${[1, 2, 3, 4, 5].map((i) => `<button type="button" data-star="${i}" class="on">★</button>`).join('')}</div></div>
+          <div class="field"><label>Tell others about it (optional)</label><textarea name="body" placeholder="How did the artist handle the design, the session, the healing advice?"></textarea></div>
+          <button class="btn btn--block">Post review</button>
+        </form>
+      </div>`, { small: true });
+    $$('[data-star]', modal).forEach((b) => b.addEventListener('click', () => {
+      rating = Number(b.dataset.star);
+      $$('[data-star]', modal).forEach((x) => x.classList.toggle('on', Number(x.dataset.star) <= rating));
+    }));
+    const form = $('[data-form]', modal);
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try { await api.post(`/api/appointments/${apptId}/review`, { rating, body: form.body.value }); closeModal(); toast('Review posted'); reload(); } catch (err) { handleError(err, $('.error', form)); }
+    });
+  }
+
   async function viewHome() {
     loading();
     let feed;
@@ -273,8 +351,8 @@
           <h1>Where ink finds <em>its people.</em></h1>
           <p>Inkwell is a home for tattoo artists to show healed work, meet the right clients, and fill their books without the back-and-forth.</p>
           <div class="hero__actions">
-            <a class="btn btn--lg" href="${state.user ? (state.user.role === 'artist' ? '#/dashboard' : '#/artists') : '#/register'}">${state.user ? (state.user.role === 'artist' ? 'Manage your studio' : 'Find an artist') : 'Join as an artist'}</a>
-            <a class="btn btn--ghost btn--lg" href="#/requests">${state.user && state.user.role === 'artist' ? 'Browse client requests' : 'Post what you want'}</a>
+            <a class="btn btn--lg" href="${state.user ? (state.user.role === 'artist' ? '/dashboard' : '/artists') : '/register'}">${state.user ? (state.user.role === 'artist' ? 'Manage your studio' : 'Find an artist') : 'Join as an artist'}</a>
+            <a class="btn btn--ghost btn--lg" href="/requests">${state.user && state.user.role === 'artist' ? 'Browse client requests' : 'Post what you want'}</a>
           </div>
           <div class="stats-row">
             <div class="stat"><strong>${artists.artists.length}</strong><span>artists</span></div>
@@ -282,7 +360,7 @@
             <div class="stat"><strong>${state.styles.length}</strong><span>styles</span></div>
           </div>
         </div>
-        <div class="hero__mosaic" aria-hidden="true">${mosaic.map((a) => `<img src="${attr(a.image_url)}" alt="">`).join('')}</div>
+        <div class="hero__mosaic" aria-hidden="true">${mosaic.map((a) => `<img src="${attr(a.thumb_url || a.image_url)}" alt="">`).join('')}</div>
       </section>
       <section class="section" style="margin-top:10px">
         <div class="section__head">
@@ -332,13 +410,14 @@
 
   function artistCard(a) {
     return `
-      <a class="artist-card" href="#/artists/${a.id}">
+      <a class="artist-card" href="/artists/${a.id}">
         ${a.cover_url ? `<img class="artist-card__cover" src="${attr(a.cover_url)}" alt="">` : '<div class="artist-card__cover"></div>'}
         <div class="artist-card__body">
           <div class="artist-card__head">${avatar(a.avatar_url, a.name)}</div>
           <div class="artist-card__name" style="margin-top:0">${esc(a.name)}</div>
           <div class="muted small">${esc(a.studio_name || 'Independent')}${a.location ? ` · ${esc(a.location)}` : ''}</div>
           <div class="chips">${a.styles.slice(0, 3).map((s) => `<span class="tag">${esc(s)}</span>`).join('')}</div>
+          ${ratingLine(a)}
           <div class="artist-card__stats">
             <span>${a.artwork_count} pieces</span><span>${a.follower_count} followers</span>
             ${a.hourly_rate ? `<span>${money(a.hourly_rate)}/hr</span>` : ''}
@@ -379,8 +458,9 @@
     loading();
     let artist;
     let work;
+    let reviews;
     try {
-      [{ artist }, work] = await Promise.all([api.get(`/api/artists/${id}`), api.get('/api/feed', { artist_id: id, limit: 12 })]);
+      [{ artist }, work, reviews] = await Promise.all([api.get(`/api/artists/${id}`), api.get('/api/feed', { artist_id: id, limit: 12 }), api.get(`/api/artists/${id}/reviews`)]);
     } catch (e) { main.innerHTML = '<div class="empty"><h3>Artist not found</h3></div>'; return; }
     const me = state.user;
     const isMe = me && me.id === artist.id;
@@ -390,7 +470,8 @@
         <div class="profile-head__info">
           <h1>${esc(artist.name)}</h1>
           <div class="muted">${esc(artist.studio_name || 'Independent artist')}${artist.location ? ` · ${esc(artist.location)}` : ''}</div>
-          <div class="chips" style="margin-top:10px">${artist.styles.map((s) => `<a class="chip" href="#/artists?style=${encodeURIComponent(s)}">${esc(s)}</a>`).join('')}</div>
+          <div style="margin-top:6px">${ratingLine(artist)}</div>
+          <div class="chips" style="margin-top:10px">${artist.styles.map((s) => `<a class="chip" href="/artists?style=${encodeURIComponent(s)}">${esc(s)}</a>`).join('')}</div>
           <div class="profile-meta">
             <span><strong>${artist.artwork_count}</strong> pieces</span>
             <span><strong data-followers>${artist.follower_count}</strong> followers</span>
@@ -407,16 +488,17 @@
           </div>
         </div>
         <div class="profile-head__actions">
-          ${isMe ? '<a class="btn btn--ghost" href="#/dashboard">Manage studio</a><a class="btn btn--subtle" href="#/settings">Edit profile</a>' : `
+          ${isMe ? '<a class="btn btn--ghost" href="/dashboard">Manage studio</a><a class="btn btn--subtle" href="/settings">Edit profile</a>' : `
             <button class="btn btn--ghost" data-follow>${artist.is_following ? 'Following' : 'Follow'}</button>
-            <a class="btn btn--ghost" href="#/messages/${artist.id}">Message</a>
-            ${!me || me.role === 'client' ? `<a class="btn" href="#/book/${artist.id}">Book a session</a>` : ''}`}
+            <a class="btn btn--ghost" href="/messages/${artist.id}">Message</a>
+            ${!me || me.role === 'client' ? `<a class="btn" href="/book/${artist.id}">Book a session</a>` : ''}
+            ${me ? '<button class="link small" data-report-user>Report</button>' : ''}`}
         </div>
       </div>
       <section class="section">
-        <div class="section__head"><h2>Galleries</h2>${isMe ? '<a class="link" href="#/dashboard">Add a gallery</a>' : ''}</div>
+        <div class="section__head"><h2>Galleries</h2>${isMe ? '<a class="link" href="/dashboard">Add a gallery</a>' : ''}</div>
         ${artist.galleries.length ? `<div class="grid grid--3">${artist.galleries.map((g) => `
-          <a class="gallery-card" href="#/galleries/${g.id}">
+          <a class="gallery-card" href="/galleries/${g.id}">
             ${g.cover_url ? `<img src="${attr(g.cover_url)}" alt="">` : '<div class="gallery-card--empty" style="height:100%">Empty gallery</div>'}
             <div class="gallery-card__label"><strong>${esc(g.title)}</strong><span>${g.artwork_count} pieces</span></div>
           </a>`).join('')}</div>` : '<div class="empty"><h3>No galleries yet</h3></div>'}
@@ -424,7 +506,40 @@
       <section class="section">
         <div class="section__head"><h2>Recent work</h2></div>
         ${work.artworks.length ? `<div class="grid-art">${work.artworks.map(artCard).join('')}</div>` : '<div class="empty"><p>No pieces shared yet.</p></div>'}
+      </section>
+      <section class="section">
+        <div class="section__head"><h2>Reviews</h2>${reviews.summary.review_count ? `<span class="row" style="gap:8px">${stars(reviews.summary.rating)}<strong>${reviews.summary.rating}</strong><span class="muted small">from ${reviews.summary.review_count} completed session${reviews.summary.review_count === 1 ? '' : 's'}</span></span>` : ''}</div>
+        ${reviews.reviews.length ? `<div class="stack">${reviews.reviews.map((rv) => `
+          <div class="card review" data-review="${rv.id}">
+            <div class="row row--between">
+              <div class="row">${avatar(rv.client_avatar_url, rv.client_name, 'avatar--sm')}<div><strong>${esc(rv.client_name)}</strong><div class="small muted">${stars(rv.rating)} · session on ${fmtSlot(rv.starts_at).split(',').slice(0, 2).join(',')}</div></div></div>
+              <span class="faint small">${timeAgo(rv.created_at)}</span>
+            </div>
+            ${rv.body ? `<p style="margin:10px 0 0">${esc(rv.body)}</p>` : ''}
+            ${rv.artist_reply ? `<div class="review__reply"><strong class="small">Reply from ${esc(artist.name.split(' ')[0])}</strong><p style="margin:4px 0 0">${esc(rv.artist_reply)}</p></div>` : ''}
+            <div class="row small" style="margin-top:8px">
+              ${isMe && !rv.artist_reply ? `<button class="link" data-reply="${rv.id}">Reply</button>` : ''}
+              ${me && (me.id === rv.client_id || me.is_admin) ? `<button class="link" data-del-review="${rv.id}">Delete</button>` : ''}
+              ${me && me.id !== rv.client_id && !isMe ? `<button class="link" data-report-review="${rv.id}">Report</button>` : ''}
+            </div>
+          </div>`).join('')}</div>` : '<div class="empty"><p>No reviews yet. Clients can review after a completed session.</p></div>'}
       </section>`;
+    const reportUser = $('[data-report-user]');
+    if (reportUser) reportUser.addEventListener('click', () => reportModal('user', artist.id, 'artist'));
+    $$('[data-report-review]').forEach((b) => b.addEventListener('click', () => reportModal('review', Number(b.dataset.reportReview), 'review')));
+    $$('[data-del-review]').forEach((b) => b.addEventListener('click', async () => {
+      if (!confirm('Delete this review?')) return;
+      try { await api.del(`/api/reviews/${b.dataset.delReview}`); toast('Review deleted'); viewArtist(id); } catch (err) { handleError(err); }
+    }));
+    $$('[data-reply]').forEach((b) => b.addEventListener('click', () => {
+      const card = b.closest('[data-review]');
+      card.insertAdjacentHTML('beforeend', `<form class="row" data-reply-form style="margin-top:10px"><input name="body" placeholder="Thank them or add context" required style="flex:1;padding:9px 12px;border-radius:999px;border:1px solid var(--line-strong);background:var(--bg);color:var(--text)"><button class="btn btn--sm">Post reply</button></form>`);
+      b.remove();
+      $('[data-reply-form]', card).addEventListener('submit', async (e) => {
+        e.preventDefault();
+        try { await api.post(`/api/reviews/${card.dataset.review}/reply`, { body: e.target.body.value }); viewArtist(id); } catch (err) { handleError(err); }
+      });
+    }));
     const follow = $('[data-follow]');
     if (follow) follow.addEventListener('click', async () => {
       if (!requireLogin()) return;
@@ -445,7 +560,7 @@
     main.innerHTML = `
       <div class="page-head">
         <div>
-          <a class="muted small" href="#/artists/${gallery.artist_id}">← ${esc(gallery.artist_name)}</a>
+          <a class="muted small" href="/artists/${gallery.artist_id}">← ${esc(gallery.artist_name)}</a>
           <h1>${esc(gallery.title)}</h1>
           ${gallery.description ? `<p class="muted">${esc(gallery.description)}</p>` : ''}
         </div>
@@ -499,7 +614,7 @@
     });
     $('[data-delete]').addEventListener('click', async () => {
       if (!confirm(`Delete "${gallery.title}" and all ${gallery.artworks.length} pieces in it?`)) return;
-      try { await api.del(`/api/galleries/${gallery.id}`); toast('Gallery deleted'); location.hash = '#/dashboard'; } catch (err) { handleError(err); }
+      try { await api.del(`/api/galleries/${gallery.id}`); toast('Gallery deleted'); navigate('/dashboard'); } catch (err) { handleError(err); }
     });
   }
 
@@ -510,7 +625,7 @@
       ? `${r.budget_min ? money(r.budget_min) : ''}${r.budget_min && r.budget_max ? ' – ' : ''}${r.budget_max ? money(r.budget_max) : ''}`
       : 'Open budget';
     return `
-      <a class="card request-card" href="#/requests/${r.id}">
+      <a class="card request-card" href="/requests/${r.id}">
         <div class="row row--between"><span class="request-card__title">${esc(r.title)}</span>${pill(r.status)}</div>
         <div class="request-card__meta">
           ${r.style ? `<span class="tag">${esc(r.style)}</span>` : ''}
@@ -533,7 +648,7 @@
     main.innerHTML = `
       <div class="page-head">
         <div><h1>Client requests</h1><p class="muted">${me && me.role === 'artist' ? 'People looking for an artist. Send a proposal to start the conversation.' : 'Describe the tattoo you want and let artists come to you.'}</p></div>
-        ${!me || me.role === 'client' ? '<a class="btn" href="#/requests/new">Post a request</a>' : ''}
+        ${!me || me.role === 'client' ? '<a class="btn" href="/requests/new">Post a request</a>' : ''}
       </div>
       ${me ? `<div class="tabs">
         <button class="${tab === 'open' ? 'active' : ''}" data-tab="open">Open requests</button>
@@ -562,8 +677,8 @@
   }
 
   function viewNewRequest() {
-    if (!requireLogin('#/requests/new')) return;
-    if (state.user.role !== 'client') { main.innerHTML = '<div class="empty"><h3>Only clients can post requests</h3><p>Browse <a class="link" href="#/requests">open requests</a> instead.</p></div>'; return; }
+    if (!requireLogin('/requests/new')) return;
+    if (state.user.role !== 'client') { main.innerHTML = '<div class="empty"><h3>Only clients can post requests</h3><p>Browse <a class="link" href="/requests">open requests</a> instead.</p></div>'; return; }
     main.innerHTML = `
       <div class="narrow">
         <h1>Post a request</h1>
@@ -594,7 +709,7 @@
       form.querySelector('button').disabled = true;
       try {
         const r = await api.post('/api/requests', new FormData(form));
-        toast('Request posted'); location.hash = `#/requests/${r.request.id}`;
+        toast('Request posted'); navigate(`/requests/${r.request.id}`);
       } catch (err) { handleError(err, $('.error', form)); form.querySelector('button').disabled = false; }
     });
   }
@@ -613,8 +728,8 @@
     const proposalHtml = (p) => `
       <div class="proposal">
         <div class="proposal__head">
-          <a href="#/artists/${p.artist_id}">${avatar(p.artist_avatar_url, p.artist_name, 'avatar--sm')}</a>
-          <div style="flex:1"><a href="#/artists/${p.artist_id}"><strong>${esc(p.artist_name)}</strong></a><div class="small muted">${esc(p.studio_name || '')}${p.artist_location ? ` · ${esc(p.artist_location)}` : ''} · ${timeAgo(p.created_at)}</div></div>
+          <a href="/artists/${p.artist_id}">${avatar(p.artist_avatar_url, p.artist_name, 'avatar--sm')}</a>
+          <div style="flex:1"><a href="/artists/${p.artist_id}"><strong>${esc(p.artist_name)}</strong></a><div class="small muted">${esc(p.studio_name || '')}${p.artist_location ? ` · ${esc(p.artist_location)}` : ''} · ${timeAgo(p.created_at)}</div></div>
           ${pill(p.status)}
         </div>
         <p>${esc(p.message)}</p>
@@ -624,15 +739,15 @@
         </div>
         ${isOwner ? `<div class="row" style="margin-top:12px">
           ${p.status === 'pending' ? `<button class="btn btn--sm" data-accept="${p.id}">Accept proposal</button><button class="btn btn--ghost btn--sm" data-decline="${p.id}">Decline</button>` : ''}
-          ${p.status === 'accepted' ? `<a class="btn btn--sm" href="#/book/${p.artist_id}?request=${request.id}">Book a session with ${esc(p.artist_name.split(' ')[0])}</a>` : ''}
-          <a class="btn btn--ghost btn--sm" href="#/messages/${p.artist_id}">Message</a>
+          ${p.status === 'accepted' ? `<a class="btn btn--sm" href="/book/${p.artist_id}?request=${request.id}">Book a session with ${esc(p.artist_name.split(' ')[0])}</a>` : ''}
+          <a class="btn btn--ghost btn--sm" href="/messages/${p.artist_id}">Message</a>
         </div>` : ''}
       </div>`;
 
     main.innerHTML = `
       <div class="two-col">
         <div>
-          <a class="muted small" href="#/requests">← All requests</a>
+          <a class="muted small" href="/requests">← All requests</a>
           <div class="row row--between" style="margin-top:6px"><h1 style="margin:0">${esc(request.title)}</h1>${pill(request.status)}</div>
           <div class="chips" style="margin:12px 0">
             ${request.style ? `<span class="tag">${esc(request.style)}</span>` : ''}
@@ -658,7 +773,7 @@
                   </div>
                   <button class="btn">Send proposal</button>
                 </form>` : '<div class="empty"><p>This request is no longer accepting proposals.</p></div>')) : ''}
-            ${!me ? '<div class="empty"><p><a class="link" href="#/login">Sign in</a> as an artist to send a proposal.</p></div>' : ''}
+            ${!me ? '<div class="empty"><p><a class="link" href="/login">Sign in</a> as an artist to send a proposal.</p></div>' : ''}
             ${me && me.role === 'client' && !isOwner ? '<div class="empty"><p>Only the person who posted this can see proposals.</p></div>' : ''}
           </section>
         </div>
@@ -668,7 +783,8 @@
             <hr class="divider" style="margin:14px 0">
             <div class="row row--between"><span class="muted">Budget</span><span class="budget">${budget}</span></div>
             <div class="row row--between" style="margin-top:6px"><span class="muted">Proposals</span><span>${request.proposal_count}</span></div>
-            ${isArtist && !isOwner ? `<a class="btn btn--ghost btn--block" style="margin-top:14px" href="#/messages/${request.client_id}">Message ${esc(request.client_name.split(' ')[0])}</a>` : ''}
+            ${isArtist && !isOwner ? `<a class="btn btn--ghost btn--block" style="margin-top:14px" href="/messages/${request.client_id}">Message ${esc(request.client_name.split(' ')[0])}</a>` : ''}
+            ${me && !isOwner ? '<div style="margin-top:10px;text-align:center"><button class="link small" data-report-request>Report this request</button></div>' : ''}
           </div>
           ${isOwner ? `<div class="card">
             <h3>Manage</h3>
@@ -683,6 +799,8 @@
         </aside>
       </div>`;
 
+    const reportReq = $('[data-report-request]');
+    if (reportReq) reportReq.addEventListener('click', () => reportModal('request', request.id, 'request'));
     const pf = $('[data-proposal]');
     if (pf) pf.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -701,14 +819,14 @@
     const del = $('[data-delete]');
     if (del) del.addEventListener('click', async () => {
       if (!confirm('Delete this request?')) return;
-      try { await api.del(`/api/requests/${id}`); toast('Request deleted'); location.hash = '#/requests?tab=mine'; } catch (err) { handleError(err); }
+      try { await api.del(`/api/requests/${id}`); toast('Request deleted'); navigate('/requests?tab=mine'); } catch (err) { handleError(err); }
     });
   }
 
   /* ---------- booking ---------- */
 
   async function viewBook(artistId, params) {
-    if (!requireLogin(`#/book/${artistId}`)) return;
+    if (!requireLogin(`/book/${artistId}`)) return;
     if (state.user.role !== 'client') { main.innerHTML = '<div class="empty"><h3>Artists book through their dashboard</h3><p>Clients book sessions with you from your profile.</p></div>'; return; }
     loading();
     let artist;
@@ -731,7 +849,7 @@
     main.innerHTML = `
       <div class="two-col">
         <div>
-          <a class="muted small" href="#/artists/${artist.id}">← ${esc(artist.name)}</a>
+          <a class="muted small" href="/artists/${artist.id}">← ${esc(artist.name)}</a>
           <h1>Book a session</h1>
           ${!artist.accepting_clients ? '<div class="error">This artist is not taking new bookings right now.</div>' : ''}
           ${!openDays.size ? '<div class="empty"><h3>No hours published yet</h3><p>Send the artist a message to arrange a time.</p></div>' : `
@@ -810,7 +928,7 @@
       try {
         await api.post('/api/appointments', { artist_id: artist.id, starts_at: selectedSlot, note: e.target.note.value, request_id: requestId || undefined });
         toast('Booking requested');
-        location.hash = '#/appointments';
+        navigate('/appointments');
       } catch (err) { handleError(err, $('.error', e.target)); submit.disabled = false; }
     });
     loadSlots(true);
@@ -825,7 +943,9 @@
     if (isArtist && a.status === 'pending') actions.push(`<button class="btn btn--sm" data-act="confirm" data-id="${a.id}">Confirm</button>`, `<button class="btn btn--ghost btn--sm" data-act="decline" data-id="${a.id}">Decline</button>`);
     if (isArtist && a.status === 'confirmed') actions.push(`<button class="btn btn--sm" data-act="complete" data-id="${a.id}">Mark completed</button>`);
     if (['pending', 'confirmed'].includes(a.status)) actions.push(`<button class="btn btn--danger btn--sm" data-act="cancel" data-id="${a.id}">Cancel</button>`);
-    actions.push(`<a class="btn btn--ghost btn--sm" href="#/messages/${other.id}">Message</a>`);
+    if (!isArtist && a.status === 'completed' && !a.review_id) actions.push(`<button class="btn btn--sm btn--subtle" data-review-appt="${a.id}">Leave a review</button>`);
+    if (!isArtist && a.review_id) actions.push(`<a class="btn btn--ghost btn--sm" href="/artists/${a.artist_id}">See your review</a>`);
+    actions.push(`<a class="btn btn--ghost btn--sm" href="/messages/${other.id}">Message</a>`);
     if (!isArtist && ['pending', 'confirmed', 'completed'].includes(a.status)) {
       (a.payments || []).filter((p) => p.status === 'pending').forEach((p) => actions.unshift(
         `<button class="btn btn--sm" data-pay="${p.id}" data-amount="${p.amount}" data-kind="${p.kind}">Pay ${money(p.amount)} ${p.kind}</button>`,
@@ -836,8 +956,8 @@
         <div class="appt__date"><span>${d.toLocaleDateString(undefined, { month: 'short' })}</span><strong>${d.getDate()}</strong><span>${d.toLocaleDateString(undefined, { weekday: 'short' })}</span></div>
         <div>
           <div class="row"><strong>${fmtTime(a.starts_at)} – ${fmtTime(a.ends_at)}</strong>${pill(a.status)}</div>
-          <div class="row" style="margin-top:6px">${avatar(other.avatar, other.name, 'avatar--xs')}<a href="#/artists/${isArtist ? me.id : a.artist_id}"><strong>${esc(other.name)}</strong></a><span class="muted small">${esc(other.label)}</span></div>
-          ${a.request_title ? `<div class="small muted" style="margin-top:4px">For request: <a class="link" href="#/requests/${a.request_id}">${esc(a.request_title)}</a></div>` : ''}
+          <div class="row" style="margin-top:6px">${avatar(other.avatar, other.name, 'avatar--xs')}<a href="/artists/${isArtist ? me.id : a.artist_id}"><strong>${esc(other.name)}</strong></a><span class="muted small">${esc(other.label)}</span></div>
+          ${a.request_title ? `<div class="small muted" style="margin-top:4px">For request: <a class="link" href="/requests/${a.request_id}">${esc(a.request_title)}</a></div>` : ''}
           ${a.note ? `<p class="small muted" style="margin:6px 0 0">${esc(a.note)}</p>` : ''}
           ${paymentsLine(a)}
         </div>
@@ -869,6 +989,7 @@
       } catch (err) { handleError(err); }
     }));
     $$('[data-pay]', root).forEach((b) => b.addEventListener('click', () => payModal(b.dataset.pay, Number(b.dataset.amount), b.dataset.kind, reload)));
+    $$('[data-review-appt]', root).forEach((b) => b.addEventListener('click', () => reviewModal(b.dataset.reviewAppt, reload)));
   }
 
   function completeModal(id, reload) {
@@ -942,7 +1063,7 @@
   }
 
   async function viewPaymentsReturn(params) {
-    if (!requireLogin('#/appointments')) return;
+    if (!requireLogin('/appointments')) return;
     loading();
     const id = params.get('payment');
     const sessionId = params.get('session_id');
@@ -950,11 +1071,11 @@
       await api.post(`/api/payments/${id}/confirm`, { session_id: sessionId });
       toast('Payment received');
     } catch (err) { handleError(err); }
-    location.hash = '#/appointments';
+    navigate('/appointments');
   }
 
   async function viewAppointments() {
-    if (!requireLogin('#/appointments')) return;
+    if (!requireLogin('/appointments')) return;
     loading();
     let list;
     try { ({ appointments: list } = await api.get('/api/appointments')); } catch (e) { return handleError(e); }
@@ -965,7 +1086,7 @@
     main.innerHTML = `
       <div class="page-head">
         <div><h1>Bookings</h1><p class="muted">${isArtist ? 'Confirm requests, and mark sessions complete when the work is done.' : 'Your sessions, pending and confirmed.'}</p></div>
-        ${!isArtist ? '<a class="btn" href="#/artists">Find an artist</a>' : '<a class="btn btn--ghost" href="#/dashboard?tab=availability">Edit availability</a>'}
+        ${!isArtist ? '<a class="btn" href="/artists">Find an artist</a>' : '<a class="btn btn--ghost" href="/dashboard?tab=availability">Edit availability</a>'}
       </div>
       <section><div class="section__head"><h2>Upcoming</h2><span class="muted small">${upcoming.filter((a) => a.status === 'pending').length} pending</span></div>
         <div class="stack" data-upcoming>${upcoming.length ? upcoming.map(apptCard).join('') : `<div class="empty"><h3>Nothing scheduled</h3><p>${isArtist ? 'When clients request a session it will show up here.' : 'Browse artists and book a session.'}</p></div>`}</div>
@@ -979,7 +1100,7 @@
   /* ---------- messages ---------- */
 
   async function viewMessages(otherId) {
-    if (!requireLogin(otherId ? `#/messages/${otherId}` : '#/messages')) return;
+    if (!requireLogin(otherId ? `/messages/${otherId}` : '/messages')) return;
     loading();
     let convos;
     try { ({ conversations: convos } = await api.get('/api/messages')); } catch (e) { return handleError(e); }
@@ -989,7 +1110,7 @@
       <div class="messages">
         <div class="messages__list ${otherId ? 'hide-mobile' : ''}" data-list>
           ${convos.length ? convos.map((c) => `
-            <a class="convo ${String(c.user_id) === String(otherId) ? 'active' : ''}" href="#/messages/${c.user_id}">
+            <a class="convo ${String(c.user_id) === String(otherId) ? 'active' : ''}" href="/messages/${c.user_id}">
               ${avatar(c.avatar_url, c.name, 'avatar--sm')}
               <div class="convo__body">
                 <div class="convo__name"><span>${esc(c.name)}</span><span class="faint small">${timeAgo(c.last_at)}</span></div>
@@ -1014,10 +1135,10 @@
       const draftValue = draft ? draft.value : '';
       threadEl.innerHTML = `
         <div class="thread__head">
-          <a href="#/messages" class="muted" style="display:none" data-back>←</a>
+          <a href="/messages" class="muted" style="display:none" data-back>←</a>
           ${avatar(r.other.avatar_url, r.other.name, 'avatar--sm')}
-          <div><a href="${r.other.role === 'artist' ? `#/artists/${r.other.id}` : '#'}"><strong>${esc(r.other.name)}</strong></a><div class="small muted">${r.other.role === 'artist' ? 'Artist' : 'Client'}${r.other.location ? ` · ${esc(r.other.location)}` : ''}</div></div>
-          <div style="margin-left:auto" class="row">${me.role === 'client' && r.other.role === 'artist' ? `<a class="btn btn--sm" href="#/book/${r.other.id}">Book</a>` : ''}</div>
+          <div>${r.other.role === 'artist' ? `<a href="/artists/${r.other.id}"><strong>${esc(r.other.name)}</strong></a>` : `<strong>${esc(r.other.name)}</strong>`}<div class="small muted">${r.other.role === 'artist' ? 'Artist' : 'Client'}${r.other.location ? ` · ${esc(r.other.location)}` : ''}</div></div>
+          <div style="margin-left:auto" class="row">${me.role === 'client' && r.other.role === 'artist' ? `<a class="btn btn--sm" href="/book/${r.other.id}">Book</a>` : ''}</div>
         </div>
         <div class="thread__body" data-body>
           ${r.messages.length ? r.messages.map((m) => `<div class="bubble ${m.sender_id === me.id ? 'bubble--mine' : ''}">${esc(m.body)}<time>${timeAgo(m.created_at)}</time></div>`).join('') : '<p class="faint" style="text-align:center;margin:auto">Say hello.</p>'}
@@ -1046,7 +1167,7 @@
   /* ---------- dashboard ---------- */
 
   async function viewDashboard(params) {
-    if (!requireLogin('#/dashboard')) return;
+    if (!requireLogin('/dashboard')) return;
     loading();
     const me = state.user;
     if (me.role === 'artist') return viewArtistDashboard(params);
@@ -1069,8 +1190,8 @@
     const pending = appts.filter((a) => a.status === 'pending').length;
     main.innerHTML = `
       <div class="page-head">
-        <div><h1>Your studio</h1><p class="muted">${esc(artist.studio_name || 'Independent')} · <a class="link" href="#/artists/${me.id}">View public profile</a></p></div>
-        <div class="row">${artist.accepting_clients ? '<span class="pill pill--open">Taking bookings</span>' : '<span class="pill pill--closed">Books closed</span>'}<a class="btn btn--ghost btn--sm" href="#/settings">Edit profile</a></div>
+        <div><h1>Your studio</h1><p class="muted">${esc(artist.studio_name || 'Independent')} · <a class="link" href="/artists/${me.id}">View public profile</a></p></div>
+        <div class="row">${artist.accepting_clients ? '<span class="pill pill--open">Taking bookings</span>' : '<span class="pill pill--closed">Books closed</span>'}<a class="btn btn--ghost btn--sm" href="/settings">Edit profile</a></div>
       </div>
       <div class="kpis">
         <div class="kpi"><strong>${artist.artwork_count}</strong><span>pieces shared</span></div>
@@ -1096,7 +1217,7 @@
         panel.innerHTML = `
           <div class="section__head"><h2>Galleries</h2><button class="btn btn--sm" data-new-gallery>New gallery</button></div>
           ${artist.galleries.length ? `<div class="grid grid--3">${artist.galleries.map((g) => `
-            <a class="gallery-card" href="#/galleries/${g.id}">
+            <a class="gallery-card" href="/galleries/${g.id}">
               ${g.cover_url ? `<img src="${attr(g.cover_url)}" alt="">` : '<div class="gallery-card--empty" style="height:100%">No pieces yet</div>'}
               <div class="gallery-card__label"><strong>${esc(g.title)}</strong><span>${g.artwork_count} pieces · open to upload</span></div>
             </a>`).join('')}</div>` : '<div class="empty"><h3>Create your first gallery</h3><p>Group your work by style, body part, or project.</p></div>'}`;
@@ -1114,14 +1235,14 @@
           const form = $('[data-form]', modal);
           form.addEventListener('submit', async (e) => {
             e.preventDefault();
-            try { const r = await api.post('/api/galleries', formData(form)); closeModal(); toast('Gallery created'); location.hash = `#/galleries/${r.gallery.id}`; } catch (err) { handleError(err, $('.error', form)); }
+            try { const r = await api.post('/api/galleries', formData(form)); closeModal(); toast('Gallery created'); navigate(`/galleries/${r.gallery.id}`); } catch (err) { handleError(err, $('.error', form)); }
           });
         });
       } else if (name === 'availability') {
         const rows = avail.availability.slice();
         const draw = () => {
           panel.innerHTML = `
-            <div class="section__head"><h2>Weekly hours</h2><span class="muted small">Sessions are ${artist.session_minutes} minutes. <a class="link" href="#/settings">Change</a></span></div>
+            <div class="section__head"><h2>Weekly hours</h2><span class="muted small">Sessions are ${artist.session_minutes} minutes. <a class="link" href="/settings">Change</a></span></div>
             <p class="muted">Clients can book any ${artist.session_minutes}-minute slot inside these windows. Times are your studio's local time.</p>
             <div class="avail-editor" data-rows>
               ${rows.map((w, i) => `
@@ -1145,16 +1266,16 @@
       } else if (name === 'bookings') {
         const upcoming = appts.filter((a) => ['pending', 'confirmed'].includes(a.status));
         panel.innerHTML = `
-          <div class="section__head"><h2>Requests &amp; upcoming sessions</h2><a class="link" href="#/appointments">Full schedule</a></div>
+          <div class="section__head"><h2>Requests &amp; upcoming sessions</h2><a class="link" href="/appointments">Full schedule</a></div>
           <div class="stack">${upcoming.length ? upcoming.map(apptCard).join('') : '<div class="empty"><h3>No upcoming sessions</h3><p>Publish your hours so clients can book.</p></div>'}</div>`;
         bindApptActions(panel, () => viewArtistDashboard(new URLSearchParams('tab=bookings')));
       } else if (name === 'proposals') {
         panel.innerHTML = `
-          <div class="section__head"><h2>Requests you proposed on</h2><a class="link" href="#/requests">Browse open requests</a></div>
+          <div class="section__head"><h2>Requests you proposed on</h2><a class="link" href="/requests">Browse open requests</a></div>
           ${proposals.length ? `<div class="grid grid--2">${proposals.map(requestCard).join('')}</div>` : '<div class="empty"><h3>No proposals yet</h3><p>Browse client requests and send a proposal to find new clients.</p></div>'}`;
       } else if (name === 'payments') {
         panel.innerHTML = `
-          <div class="section__head"><h2>Payments</h2><span class="muted small">Deposit: ${artist.deposit_amount ? money(artist.deposit_amount) : 'none'} · <a class="link" href="#/settings">Change</a></span></div>
+          <div class="section__head"><h2>Payments</h2><span class="muted small">Deposit: ${artist.deposit_amount ? money(artist.deposit_amount) : 'none'} · <a class="link" href="/settings">Change</a></span></div>
           <div class="kpis" style="margin-bottom:18px">
             <div class="kpi"><strong>${money(pay.summary.collected)}</strong><span>collected</span></div>
             <div class="kpi"><strong>${money(pay.summary.outstanding)}</strong><span>awaiting payment</span></div>
@@ -1179,7 +1300,7 @@
     main.innerHTML = `
       <div class="page-head">
         <div><h1>Hi, ${esc(me.name.split(' ')[0])}</h1><p class="muted">Your requests and sessions in one place.</p></div>
-        <div class="row"><a class="btn btn--ghost" href="#/artists">Find an artist</a><a class="btn" href="#/requests/new">Post a request</a></div>
+        <div class="row"><a class="btn btn--ghost" href="/artists">Find an artist</a><a class="btn" href="/requests/new">Post a request</a></div>
       </div>
       <div class="kpis">
         <div class="kpi"><strong>${requests.filter((r) => r.status === 'open').length}</strong><span>open requests</span></div>
@@ -1188,7 +1309,7 @@
         <div class="kpi"><strong>${money(dueNow)}</strong><span>due now</span></div>
       </div>
       <section class="section">
-        <div class="section__head"><h2>Upcoming sessions</h2><a class="link" href="#/appointments">All bookings</a></div>
+        <div class="section__head"><h2>Upcoming sessions</h2><a class="link" href="/appointments">All bookings</a></div>
         <div class="stack">${upcoming.length ? upcoming.map(apptCard).join('') : '<div class="empty"><p>No sessions booked. Pick an artist and request a slot.</p></div>'}</div>
       </section>
       <section class="section">
@@ -1205,7 +1326,7 @@
   /* ---------- settings ---------- */
 
   function viewSettings() {
-    if (!requireLogin('#/settings')) return;
+    if (!requireLogin('/settings')) return;
     const u = state.user;
     const p = u.profile || {};
     main.innerHTML = `
@@ -1259,7 +1380,37 @@
           <h3>Recent emails</h3>
           <div class="loading">Loading</div>
         </div>
+        <div class="card" style="margin-top:14px">
+          <h3>Your account</h3>
+          <div class="list-item"><div><strong>Download your data</strong><div class="small muted">Everything we hold about you, as a JSON file.</div></div><a class="btn btn--ghost btn--sm" href="/api/auth/me/export" download rel="external">Export</a></div>
+          <div class="list-item"><div><strong>Sign out everywhere</strong><div class="small muted">Ends every session, including this one.</div></div><button class="btn btn--ghost btn--sm" data-logout-all>Sign out all</button></div>
+          <div class="list-item"><div><strong>Delete account</strong><div class="small muted">Removes your profile, galleries, requests and messages. Payment records are kept without your details.</div></div><button class="btn btn--danger btn--sm" data-delete-account>Delete</button></div>
+        </div>
       </div>`;
+    $('[data-logout-all]').addEventListener('click', async () => {
+      if (!confirm('Sign out of every device?')) return;
+      try { await api.post('/api/auth/logout-all'); state.user = null; renderNav(); navigate('/'); } catch (err) { handleError(err); }
+    });
+    $('[data-delete-account]').addEventListener('click', () => {
+      const modal = openModal(`
+        <div class="modal__panel">
+          <div class="modal__head"><h3 style="margin:0">Delete your account</h3><button class="modal__close" data-close-modal>×</button></div>
+          <form class="form modal__body" data-form>
+            <div class="error" hidden></div>
+            <p class="muted">This cannot be undone. Active bookings are cancelled and deposits refunded under the usual policy.</p>
+            <div class="field"><label>Confirm with your password</label><input name="password" type="password" required autocomplete="current-password"></div>
+            <button class="btn btn--danger btn--block">Delete my account</button>
+          </form>
+        </div>`, { small: true });
+      const form = $('[data-form]', modal);
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        try {
+          await fetch('/api/auth/me', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: form.password.value }) }).then(async (r) => { if (!r.ok) throw new Error((await r.json()).error); });
+          closeModal(); state.user = null; renderNav(); toast('Your account has been deleted'); navigate('/');
+        } catch (err) { handleError(err, $('.error', form)); }
+      });
+    });
     const pwForm = $('[data-password]');
     pwForm.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -1298,7 +1449,7 @@
   /* ---------- auth ---------- */
 
   function viewLogin(params) {
-    const next = params.get('next') || '#/';
+    const next = params.get('next') || '/';
     main.innerHTML = `
       <div class="narrow" style="max-width:440px">
         <h1>Welcome back</h1>
@@ -1307,7 +1458,7 @@
           <div class="field"><label>Email</label><input name="email" type="email" required autofocus></div>
           <div class="field"><label>Password</label><input name="password" type="password" required></div>
           <button class="btn btn--block btn--lg">Log in</button>
-          <p class="muted small" style="text-align:center;margin:0">New here? <a class="link" href="#/register">Create an account</a> · <a class="link" href="#/forgot">Forgot password?</a></p>
+          <p class="muted small" style="text-align:center;margin:0">New here? <a class="link" href="/register">Create an account</a> · <a class="link" href="/forgot">Forgot password?</a></p>
         </form>
         <div class="demo-box" style="margin-top:14px">
           <strong>Try a demo account</strong> · password <code>password123</code><br>
@@ -1321,7 +1472,7 @@
         const r = await api.post('/api/auth/login', formData(form));
         state.user = r.user; renderNav(); refreshUnread();
         toast(`Welcome back, ${r.user.name.split(' ')[0]}`);
-        location.hash = next;
+        navigate(next);
       } catch (err) { handleError(err, $('.error', form)); }
     });
   }
@@ -1346,8 +1497,9 @@
             <div class="field"><label>Studio name</label><input name="studio_name" placeholder="Optional"></div>
             <div class="field" style="margin-top:14px"><span class="label">Styles you work in</span><div class="chips">${state.styles.map((s) => `<label class="chip"><input type="checkbox" name="styles" value="${attr(s)}" hidden>${esc(s)}</label>`).join('')}</div></div>
           </div>
+          <label class="check small"><input type="checkbox" name="accept_terms" required> I agree to the <a class="link" href="/terms" target="_blank" rel="external">Terms of Service</a> and <a class="link" href="/privacy" target="_blank" rel="external">Privacy Policy</a>.</label>
           <button class="btn btn--block btn--lg">Create account</button>
-          <p class="muted small" style="text-align:center;margin:0">Already have an account? <a class="link" href="#/login">Log in</a></p>
+          <p class="muted small" style="text-align:center;margin:0">Already have an account? <a class="link" href="/login">Log in</a></p>
         </form>
       </div>`;
     const form = $('[data-form]');
@@ -1358,11 +1510,12 @@
       e.preventDefault();
       const data = formData(form);
       data.styles = $$('input[name="styles"]:checked').map((i) => i.value);
+      data.accept_terms = form.accept_terms.checked;
       try {
         const r = await api.post('/api/auth/register', data);
         state.user = r.user; renderNav();
         toast('Welcome to Inkwell');
-        location.hash = r.user.role === 'artist' ? '#/dashboard' : '#/artists';
+        navigate(r.user.role === 'artist' ? '/dashboard' : '/artists');
       } catch (err) { handleError(err, $('.error', form)); }
     });
   }
@@ -1376,7 +1529,7 @@
           <div class="error" hidden></div>
           <div class="field"><label>Email</label><input name="email" type="email" required autofocus></div>
           <button class="btn btn--block btn--lg">Send reset link</button>
-          <p class="muted small" style="text-align:center;margin:0"><a class="link" href="#/login">Back to log in</a></p>
+          <p class="muted small" style="text-align:center;margin:0"><a class="link" href="/login">Back to log in</a></p>
         </form>
       </div>`;
     const form = $('[data-form]');
@@ -1388,7 +1541,7 @@
           <div class="narrow" style="max-width:440px">
             <h1>Check your inbox</h1>
             <div class="card"><p>${esc(r.message)}</p><p class="muted small" style="margin:0">The link works for one hour.</p></div>
-            ${r.dev_reset_url ? `<div class="demo-box" style="margin-top:14px"><strong>No mail server is configured.</strong> For this demo, here is the link that would have been emailed:<br><a class="link" href="${attr(r.dev_reset_url.replace(/^.*\/#/, '#'))}">Reset password</a></div>` : ''}
+            ${r.dev_reset_url ? `<div class="demo-box" style="margin-top:14px"><strong>No mail server is configured.</strong> For this demo, here is the link that would have been emailed:<br><a class="link" href="${attr(r.dev_reset_url.replace(/^https?:\/\/[^/]+/, ''))}">Reset password</a></div>` : ''}
           </div>`;
       } catch (err) { handleError(err, $('.error', form)); }
     });
@@ -1401,7 +1554,7 @@
         <h1>Choose a new password</h1>
         <form class="form card" data-form>
           <div class="error" hidden></div>
-          ${token ? '' : '<div class="error">This reset link is missing its token. <a class="link" href="#/forgot">Request a new one.</a></div>'}
+          ${token ? '' : '<div class="error">This reset link is missing its token. <a class="link" href="/forgot">Request a new one.</a></div>'}
           <div class="field"><label>New password</label><input name="password" type="password" minlength="8" required autocomplete="new-password" autofocus></div>
           <div class="field"><label>Confirm password</label><input name="confirm" type="password" minlength="8" required autocomplete="new-password"></div>
           <button class="btn btn--block btn--lg" ${token ? '' : 'disabled'}>Save password</button>
@@ -1415,9 +1568,166 @@
         const r = await api.post('/api/auth/reset', { token, password: form.password.value });
         state.user = r.user; renderNav(); refreshUnread();
         toast('Password updated. You are signed in.');
-        location.hash = '#/';
+        navigate('/');
       } catch (err) { handleError(err, $('.error', form)); }
     });
+  }
+
+  /* ---------- legal pages ---------- */
+
+  const LEGAL_NOTE = '<div class="demo-box" style="margin-bottom:18px">This is a starting template. Have a lawyer in your jurisdiction review it before launch and replace the placeholders.</div>';
+
+  function viewTerms() {
+    main.innerHTML = `
+      <div class="narrow legal">
+        <h1>Terms of Service</h1>
+        <p class="muted">Last updated: ${new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}</p>
+        ${LEGAL_NOTE}
+        <h3>1. Who we are</h3><p>Inkwell ("we", "us") operates this website, a marketplace where tattoo artists ("Artists") present their work and clients ("Clients") request and book tattoo sessions. Inkwell is not a party to the agreement between an Artist and a Client and does not perform tattoo services.</p>
+        <h3>2. Accounts</h3><p>You must be at least 18 years old to use Inkwell. You are responsible for keeping your password private and for everything that happens under your account. Provide accurate information and keep it up to date.</p>
+        <h3>3. Artists</h3><p>Artists confirm that they hold any licence or registration required where they work, that they own or have rights to the images they upload, and that the work shown is their own. Artists set their own prices, deposits and hours.</p>
+        <h3>4. Bookings, deposits and refunds</h3><p>A booking request becomes an appointment when the Artist confirms it. Deposits are charged when a booking is requested and are refunded in full if the Artist declines or cancels, or if the Client cancels at least ${state.pay.refund_window_hours} hours before the session. Later cancellations by the Client forfeit the deposit to the Artist. Balance payments are due after the session. Payment processing is handled by our payment provider; Inkwell does not store card numbers.</p>
+        <h3>5. Content and conduct</h3><p>Do not upload content you do not have the right to share, or content that is illegal, hateful, harassing, sexually explicit, or that impersonates someone else. We may remove content and suspend accounts that break these rules. You keep the rights to your content and grant us a licence to display it on Inkwell for the purpose of running the service.</p>
+        <h3>6. Health and safety</h3><p>Tattooing carries health risks. Clients are responsible for disclosing relevant medical information to the Artist and following aftercare advice. Artists are responsible for hygiene and safe practice. Inkwell provides no medical advice.</p>
+        <h3>7. Liability</h3><p>Inkwell is provided "as is". To the extent permitted by law we are not liable for the quality of any tattoo, for disputes between Artists and Clients, or for indirect or consequential losses.</p>
+        <h3>8. Changes and termination</h3><p>We may update these terms; continued use after a change means you accept it. You can delete your account at any time from settings. We may suspend or terminate accounts that break these terms.</p>
+        <h3>9. Contact</h3><p>Questions about these terms: <a class="link" href="mailto:support@inkwell.example">support@inkwell.example</a>.</p>
+      </div>`;
+  }
+
+  function viewPrivacy() {
+    main.innerHTML = `
+      <div class="narrow legal">
+        <h1>Privacy Policy</h1>
+        <p class="muted">Last updated: ${new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}</p>
+        ${LEGAL_NOTE}
+        <h3>What we collect</h3><p>Account details (name, email, password hash, location, bio, profile photo), the content you post (galleries, requests, proposals, messages, reviews), booking and payment records (amounts, status and the last four digits of a card, never the full number), and technical logs (IP address, browser, pages requested) kept for security.</p>
+        <h3>How we use it</h3><p>To run the marketplace: show profiles and galleries, connect Clients with Artists, process bookings and payments, send the emails you have asked for, keep the site safe, and comply with legal obligations such as accounting rules.</p>
+        <h3>Emails</h3><p>We send transactional emails about bookings, payments, proposals, messages and your account. You can turn off notification emails in settings. Account security emails are always sent.</p>
+        <h3>Cookies</h3><p>We use one strictly necessary cookie to keep you signed in. We do not use advertising or tracking cookies.</p>
+        <h3>Sharing</h3><p>Your public profile and content are visible to anyone. Payment details are shared with our payment processor to complete a charge. We share data with authorities only when legally required. We do not sell personal data.</p>
+        <h3>Retention</h3><p>Content is kept while your account exists. When you delete your account we remove your profile, content and messages and anonymise records we must keep for accounting.</p>
+        <h3>Your rights</h3><p>You can export your data and delete your account from settings at any time. Depending on where you live you may have further rights to access, correct or restrict processing; contact us to exercise them.</p>
+        <h3>Contact</h3><p><a class="link" href="mailto:privacy@inkwell.example">privacy@inkwell.example</a></p>
+      </div>`;
+  }
+
+  /* ---------- admin ---------- */
+
+  async function viewAdmin(params) {
+    if (!requireLogin('/admin')) return;
+    if (!state.user.is_admin) { main.innerHTML = '<div class="empty"><h3>Admins only</h3></div>'; return; }
+    loading();
+    let overview;
+    try { ({ overview } = await api.get('/api/admin/overview')); } catch (e) { return handleError(e); }
+    const tab = params.get('tab') || 'reports';
+    main.innerHTML = `
+      <div class="page-head"><div><h1>Moderation</h1><p class="muted">Reports, users and site health.</p></div></div>
+      <div class="kpis">
+        <div class="kpi"><strong>${overview.open_reports}</strong><span>open reports</span></div>
+        <div class="kpi"><strong>${overview.users}</strong><span>users · ${overview.signups_7d} new this week</span></div>
+        <div class="kpi"><strong>${overview.artists}</strong><span>artists</span></div>
+        <div class="kpi"><strong>${overview.artworks}</strong><span>artworks</span></div>
+        <div class="kpi"><strong>${overview.active_bookings}</strong><span>active bookings</span></div>
+        <div class="kpi"><strong>${money(overview.payments_collected)}</strong><span>collected</span></div>
+        <div class="kpi"><strong>${overview.suspended}</strong><span>suspended</span></div>
+      </div>
+      <div class="tabs" style="margin-top:24px">
+        <button data-tab="reports" class="${tab === 'reports' ? 'active' : ''}">Open reports</button>
+        <button data-tab="closed" class="${tab === 'closed' ? 'active' : ''}">Closed reports</button>
+        <button data-tab="users" class="${tab === 'users' ? 'active' : ''}">Users</button>
+      </div>
+      <div data-panel></div>`;
+    const panel = $('[data-panel]');
+
+    const targetHtml = (r) => {
+      const t = r.target;
+      if (!t) return '<span class="faint">Content already removed</span>';
+      const owner = t.role === 'artist' ? `<a class="link" href="/artists/${t.owner_id}">${esc(t.owner_name)}</a>` : `<strong>${esc(t.owner_name)}</strong>`;
+      switch (r.target_type) {
+        case 'artwork': return `<div class="row"><img src="${attr(t.thumb_url || t.image_url)}" alt="" style="width:64px;height:80px;object-fit:cover;border-radius:6px"><div><strong>${esc(t.title)}</strong><div class="small muted">by ${owner}</div><div class="small muted">${esc((t.description || '').slice(0, 120))}</div></div></div>`;
+        case 'comment': return `<div><em>"${esc(t.body)}"</em><div class="small muted">comment by ${owner}</div></div>`;
+        case 'user': return `<div class="row">${avatar(t.avatar_url, t.name, 'avatar--sm')}<div><strong>${esc(t.name)}</strong> <span class="tag">${esc(t.role)}</span>${t.suspended_at ? ' <span class="pill pill--closed">suspended</span>' : ''}<div class="small muted">${esc(t.email)}</div></div></div>`;
+        case 'request': return `<div><strong>${esc(t.title)}</strong><div class="small muted">request by ${owner}</div><div class="small muted">${esc((t.description || '').slice(0, 160))}</div></div>`;
+        case 'review': return `<div>${stars(t.rating)} <em>"${esc(t.body || '')}"</em><div class="small muted">review by ${owner}</div></div>`;
+        default: return '';
+      }
+    };
+
+    async function renderReports(status) {
+      panel.innerHTML = '<div class="loading">Loading</div>';
+      let reports;
+      try { ({ reports } = await api.get('/api/admin/reports', { status })); } catch (e) { return handleError(e); }
+      if (status === 'closed') {
+        let more;
+        try { ({ reports: more } = await api.get('/api/admin/reports', { status: 'dismissed' })); } catch { more = []; }
+        reports = [...reports, ...more].sort((a, b) => (a.resolved_at < b.resolved_at ? 1 : -1));
+      }
+      panel.innerHTML = reports.length ? `<div class="stack">${reports.map((r) => `
+        <div class="card" data-report="${r.id}">
+          <div class="row row--between">
+            <div class="row"><span class="tag">${esc(r.target_type)} #${r.target_id}</span><strong>${esc(r.reason)}</strong>${pill(r.status)}</div>
+            <span class="faint small">by ${esc(r.reporter_name)} · ${timeAgo(r.created_at)}</span>
+          </div>
+          ${r.details ? `<p class="small muted" style="margin:8px 0 0">${esc(r.details)}</p>` : ''}
+          <div style="margin-top:12px;padding:12px;background:var(--bg);border-radius:10px">${targetHtml(r)}</div>
+          ${r.status === 'open' ? `
+            <div class="row" style="margin-top:12px">
+              <input data-note placeholder="Note for the record (optional)" style="flex:1;min-width:200px;padding:8px 12px;border-radius:999px;border:1px solid var(--line-strong);background:var(--bg);color:var(--text)">
+              <button class="btn btn--ghost btn--sm" data-resolve="dismiss">Dismiss</button>
+              ${r.target_type !== 'user' && r.target ? '<button class="btn btn--sm btn--subtle" data-resolve="remove">Remove content</button>' : ''}
+              ${r.target ? '<button class="btn btn--danger btn--sm" data-resolve="suspend">Suspend owner</button>' : ''}
+            </div>` : `<div class="small muted" style="margin-top:8px">${esc(r.resolution || '')} · ${timeAgo(r.resolved_at)}</div>`}
+        </div>`).join('')}</div>` : '<div class="empty"><h3>Queue is clear</h3></div>';
+      $$('[data-resolve]', panel).forEach((b) => b.addEventListener('click', async () => {
+        const card = b.closest('[data-report]');
+        const action = b.dataset.resolve;
+        if (action === 'suspend' && !confirm('Suspend this user and remove the reported content?')) return;
+        try { await api.post(`/api/admin/reports/${card.dataset.report}/resolve`, { action, note: $('[data-note]', card).value }); toast('Report closed'); viewAdmin(new URLSearchParams(`tab=${status === 'open' ? 'reports' : 'closed'}`)); } catch (err) { handleError(err); }
+      }));
+    }
+
+    async function renderUsers(q = '') {
+      panel.innerHTML = `
+        <form class="filters" data-search><input name="q" placeholder="Search name or email" value="${attr(q)}"><button class="btn btn--subtle btn--sm">Search</button></form>
+        <div data-users><div class="loading">Loading</div></div>`;
+      $('[data-search]', panel).addEventListener('submit', (e) => { e.preventDefault(); renderUsers(e.target.q.value.trim()); });
+      let users;
+      try { ({ users } = await api.get('/api/admin/users', { q })); } catch (e) { return handleError(e); }
+      $('[data-users]', panel).innerHTML = `<div style="overflow-x:auto"><table class="table">
+        <thead><tr><th>User</th><th>Role</th><th>Joined</th><th>Status</th><th></th></tr></thead>
+        <tbody>${users.map((u) => `<tr data-user="${u.id}">
+          <td><div class="row">${avatar(u.avatar_url, u.name, 'avatar--xs')}<div><strong>${esc(u.name)}</strong>${u.is_admin ? ' <span class="tag">admin</span>' : ''}<div class="small muted">${esc(u.email)}</div></div></div></td>
+          <td>${esc(u.role)}</td>
+          <td class="small muted">${timeAgo(u.created_at)}</td>
+          <td>${u.suspended_at ? `<span class="pill pill--closed" title="${attr(u.suspended_reason || '')}">suspended</span>` : '<span class="pill pill--open">active</span>'}${u.open_reports ? ` <span class="pill pill--pending">${u.open_reports} report${u.open_reports === 1 ? '' : 's'}</span>` : ''}</td>
+          <td class="row" style="justify-content:flex-end">
+            ${u.id === state.user.id ? '<span class="faint small">you</span>' : `
+              ${u.suspended_at ? `<button class="btn btn--ghost btn--sm" data-unsuspend="${u.id}">Reinstate</button>` : `<button class="btn btn--danger btn--sm" data-suspend="${u.id}">Suspend</button>`}
+              <button class="btn btn--ghost btn--sm" data-admin="${u.id}" data-value="${u.is_admin ? 0 : 1}">${u.is_admin ? 'Remove admin' : 'Make admin'}</button>`}
+          </td>
+        </tr>`).join('')}</tbody></table></div>`;
+      $$('[data-suspend]', panel).forEach((b) => b.addEventListener('click', async () => {
+        const reason = prompt('Reason for suspension (sent to the user):');
+        if (reason === null) return;
+        try { await api.post(`/api/admin/users/${b.dataset.suspend}/suspend`, { reason }); toast('User suspended'); renderUsers(q); } catch (err) { handleError(err); }
+      }));
+      $$('[data-unsuspend]', panel).forEach((b) => b.addEventListener('click', async () => {
+        try { await api.post(`/api/admin/users/${b.dataset.unsuspend}/unsuspend`); toast('User reinstated'); renderUsers(q); } catch (err) { handleError(err); }
+      }));
+      $$('[data-admin]', panel).forEach((b) => b.addEventListener('click', async () => {
+        try { await api.post(`/api/admin/users/${b.dataset.admin}/admin`, { is_admin: b.dataset.value === '1' }); renderUsers(q); } catch (err) { handleError(err); }
+      }));
+    }
+
+    const show = (name) => {
+      $$('[data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
+      if (name === 'reports') renderReports('open');
+      else if (name === 'closed') renderReports('closed');
+      else renderUsers();
+    };
+    $$('[data-tab]').forEach((b) => b.addEventListener('click', () => show(b.dataset.tab)));
+    show(tab);
   }
 
   /* ---------- router ---------- */
@@ -1441,6 +1751,9 @@
     [/^\/forgot$/, () => viewForgot()],
     [/^\/reset$/, (m, p) => viewReset(p)],
     [/^\/payments\/return$/, (m, p) => viewPaymentsReturn(p)],
+    [/^\/terms$/, () => viewTerms()],
+    [/^\/privacy$/, () => viewPrivacy()],
+    [/^\/admin$/, (m, p) => viewAdmin(p)],
   ];
 
   function route() {
@@ -1448,16 +1761,16 @@
     cleanupFns.forEach((fn) => fn());
     cleanupFns = [];
     closeModal();
-    const raw = location.hash.replace(/^#/, '') || '/';
-    const [path, query = ''] = raw.split('?');
-    const params = new URLSearchParams(query);
+    renderBanner();
+    const path = location.pathname.replace(/\/+$/, '') || '/';
+    const params = new URLSearchParams(location.search);
     renderNav();
     window.scrollTo({ top: 0 });
     for (const [re, handler] of routes) {
       const m = path.match(re);
       if (m) { handler(m, params); return; }
     }
-    main.innerHTML = '<div class="empty"><h3>Page not found</h3><p><a class="link" href="#/">Back to explore</a></p></div>';
+    main.innerHTML = '<div class="empty"><h3>Page not found</h3><p><a class="link" href="/">Back to explore</a></p></div>';
   }
 
   async function boot() {
@@ -1472,6 +1785,17 @@
     setInterval(refreshUnread, 30000);
   }
 
-  window.addEventListener('hashchange', route);
+  window.addEventListener('popstate', route);
+  // Intercept same-origin link clicks so the app navigates without a full reload.
+  document.addEventListener('click', (e) => {
+    const a = e.target.closest('a[href]');
+    if (!a || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    if (a.target && a.target !== '_self') return;
+    if (a.hasAttribute('download') || a.getAttribute('rel') === 'external') return;
+    const href = a.getAttribute('href');
+    if (!href || !href.startsWith('/') || href.startsWith('//') || href.startsWith('/api/') || href.startsWith('/uploads/')) return;
+    e.preventDefault();
+    navigate(href);
+  });
   boot();
 })();

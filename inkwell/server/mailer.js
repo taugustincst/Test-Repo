@@ -113,7 +113,7 @@ const templates = {
       paragraphs: user.role === 'artist'
         ? ['Your studio is live. Create a gallery, publish your weekly hours, and browse client requests to fill your books.']
         : ['Your account is ready. Browse artists, post what you want, and book a session when you find the right fit.'],
-      cta: { label: user.role === 'artist' ? 'Open your dashboard' : 'Find an artist', url: `${APP_URL}/#/${user.role === 'artist' ? 'dashboard' : 'artists'}` },
+      cta: { label: user.role === 'artist' ? 'Open your dashboard' : 'Find an artist', url: `${APP_URL}/${user.role === 'artist' ? 'dashboard' : 'artists'}` },
     };
   },
   passwordReset(user, url) {
@@ -129,7 +129,7 @@ const templates = {
       to: user, force: true, subject: `Your ${APP_NAME} password was changed`,
       title: 'Password changed',
       paragraphs: ['Your password was just changed and all other sessions were signed out. If you did not do this, reset your password right away.'],
-      cta: { label: 'Reset password', url: `${APP_URL}/#/forgot` },
+      cta: { label: 'Reset password', url: `${APP_URL}/forgot` },
     };
   },
   bookingRequested(appt) {
@@ -141,7 +141,7 @@ const templates = {
         appt.note ? `Their note: "${appt.note}"` : 'They did not leave a note.',
         appt.deposit_amount ? `A ${money(appt.deposit_amount)} deposit is due from the client.` : 'No deposit is required for this booking.',
       ],
-      cta: { label: 'Review the request', url: `${APP_URL}/#/appointments` },
+      cta: { label: 'Review the request', url: `${APP_URL}/appointments` },
     };
   },
   bookingStatus(appt, action, actorName) {
@@ -152,14 +152,14 @@ const templates = {
       complete: ['Session completed', `${actorName} marked your session on ${fmtWhen(appt.starts_at)} as completed.${appt.price ? ` The session total is ${money(appt.price)}.` : ''}`],
     };
     const [title, line] = map[action];
-    return { subject: title, title, paragraphs: [line], cta: { label: 'View bookings', url: `${APP_URL}/#/appointments` } };
+    return { subject: title, title, paragraphs: [line], cta: { label: 'View bookings', url: `${APP_URL}/appointments` } };
   },
   paymentDue(payment, appt) {
     return {
       to: payment.payer_id, subject: `${payment.kind === 'deposit' ? 'Deposit' : 'Balance'} due for your session with ${appt.artist_name}`,
       title: `${money(payment.amount)} ${payment.kind} due`,
       paragraphs: [`Your session with ${appt.artist_name} on ${fmtWhen(appt.starts_at)} has a ${money(payment.amount)} ${payment.kind} to pay.`],
-      cta: { label: 'Pay now', url: `${APP_URL}/#/appointments` },
+      cta: { label: 'Pay now', url: `${APP_URL}/appointments` },
     };
   },
   paymentReceived(payment, appt) {
@@ -167,7 +167,7 @@ const templates = {
       to: payment.payee_id, subject: `${appt.client_name} paid a ${money(payment.amount)} ${payment.kind}`,
       title: 'Payment received',
       paragraphs: [`${appt.client_name} paid the ${money(payment.amount)} ${payment.kind} for ${fmtWhen(appt.starts_at)}.`],
-      cta: { label: 'View bookings', url: `${APP_URL}/#/appointments` },
+      cta: { label: 'View bookings', url: `${APP_URL}/appointments` },
     };
   },
   paymentRefunded(payment, appt) {
@@ -185,7 +185,7 @@ const templates = {
         `${proposal.artist_name} wants to work on "${request.title}".`,
         proposal.quoted_price ? `Quote: ${money(proposal.quoted_price)}${proposal.estimated_hours ? ` for about ${proposal.estimated_hours} hours` : ''}.` : 'They did not include a quote.',
       ],
-      cta: { label: 'Read the proposal', url: `${APP_URL}/#/requests/${request.id}` },
+      cta: { label: 'Read the proposal', url: `${APP_URL}/requests/${request.id}` },
     };
   },
   proposalDecided(request, proposal, accepted) {
@@ -195,7 +195,45 @@ const templates = {
       paragraphs: [accepted
         ? `${request.client_name} accepted your proposal for "${request.title}". They can now book from your availability, and you can message them to plan the piece.`
         : `${request.client_name} went another direction on "${request.title}". Thanks for taking the time to propose.`],
-      cta: { label: 'Open the request', url: `${APP_URL}/#/requests/${request.id}` },
+      cta: { label: 'Open the request', url: `${APP_URL}/requests/${request.id}` },
+    };
+  },
+  reportFiled(adminId, report) {
+    return {
+      to: adminId, force: true, subject: `New report: ${report.target_type} #${report.target_id}`,
+      title: 'Content reported',
+      paragraphs: [`A ${report.target_type} was reported for "${report.reason}".`, report.details ? `Details: ${report.details}` : 'No further details were given.'],
+      cta: { label: 'Open the moderation queue', url: `${APP_URL}/admin` },
+    };
+  },
+  accountSuspended(user, reason) {
+    return {
+      to: user, force: true, subject: `Your ${APP_NAME} account has been suspended`,
+      title: 'Account suspended',
+      paragraphs: [`Your account was suspended${reason ? ` for the following reason: ${reason}` : ''}.`, 'While suspended you cannot sign in, book, post or message. Reply to this email if you believe this was a mistake.'],
+    };
+  },
+  accountReinstated(user) {
+    return {
+      to: user, force: true, subject: `Your ${APP_NAME} account is active again`,
+      title: 'Welcome back',
+      paragraphs: ['Your account has been reinstated and you can sign in as usual.'],
+      cta: { label: 'Sign in', url: `${APP_URL}/login` },
+    };
+  },
+  accountDeleted(user) {
+    return {
+      to: user, force: true, subject: `Your ${APP_NAME} account has been deleted`,
+      title: 'Account deleted',
+      paragraphs: ['Your profile, galleries, requests and messages have been removed. Records of completed payments are kept for accounting, with your personal details replaced.'],
+    };
+  },
+  reviewReceived(review, artistId) {
+    return {
+      to: artistId, subject: `${review.client_name} left you a ${review.rating}-star review`,
+      title: 'New review',
+      paragraphs: [review.body ? `"${review.body}"` : `${review.client_name} rated the session ${review.rating} out of 5.`],
+      cta: { label: 'See your reviews', url: `${APP_URL}/artists/${artistId}` },
     };
   },
   newMessage(sender, recipientId, body) {
@@ -203,7 +241,7 @@ const templates = {
       to: recipientId, subject: `New message from ${sender.name}`,
       title: `${sender.name} sent you a message`,
       paragraphs: [body.length > 240 ? `${body.slice(0, 240)}...` : body],
-      cta: { label: 'Reply', url: `${APP_URL}/#/messages/${sender.id}` },
+      cta: { label: 'Reply', url: `${APP_URL}/messages/${sender.id}` },
     };
   },
 };

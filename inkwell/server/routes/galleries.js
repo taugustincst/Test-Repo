@@ -3,12 +3,13 @@
 const express = require('express');
 const { db, STYLES } = require('../db');
 const { requireAuth, requireRole } = require('../auth');
-const { upload, publicUrl, removeByUrl } = require('../upload');
+const { upload, removeByUrl } = require('../upload');
+const { processArtwork } = require('../images');
 
 const router = express.Router();
 
 const ARTWORK_SELECT = `
-  SELECT a.id, a.gallery_id, a.artist_id, a.image_url, a.title, a.description, a.style, a.placement, a.created_at,
+  SELECT a.id, a.gallery_id, a.artist_id, a.image_url, a.thumb_url, a.width, a.height, a.title, a.description, a.style, a.placement, a.created_at,
          u.name AS artist_name, u.avatar_url AS artist_avatar_url, u.location AS artist_location,
          g.title AS gallery_title,
          (SELECT COUNT(*) FROM likes l WHERE l.artwork_id = a.id) AS like_count,
@@ -29,8 +30,8 @@ const insertGallery = db.prepare('INSERT INTO galleries (artist_id, title, descr
 const updateGallery = db.prepare('UPDATE galleries SET title = ?, description = ? WHERE id = ?');
 const deleteGallery = db.prepare('DELETE FROM galleries WHERE id = ?');
 const insertArtwork = db.prepare(`
-  INSERT INTO artworks (gallery_id, artist_id, image_url, title, description, style, placement)
-  VALUES (@gallery_id, @artist_id, @image_url, @title, @description, @style, @placement)
+  INSERT INTO artworks (gallery_id, artist_id, image_url, thumb_url, width, height, title, description, style, placement)
+  VALUES (@gallery_id, @artist_id, @image_url, @thumb_url, @width, @height, @title, @description, @style, @placement)
 `);
 const updateArtwork = db.prepare(`
   UPDATE artworks SET title = @title, description = @description, style = @style, placement = @placement WHERE id = @id
@@ -66,7 +67,7 @@ router.get('/feed', (req, res) => {
   const limit = Math.min(60, Math.max(1, Number(req.query.limit) || 24));
   const offset = Math.max(0, Number(req.query.offset) || 0);
 
-  const where = [];
+  const where = ['u.suspended_at IS NULL'];
   const params = [];
   const artistId = Number(req.query.artist_id);
   if (Number.isInteger(artistId) && artistId > 0) { where.push('a.artist_id = ?'); params.push(artistId); }
@@ -125,16 +126,21 @@ router.delete('/galleries/:id', requireRole('artist'), (req, res) => {
   res.json({ ok: true });
 });
 
-router.post('/galleries/:id/artworks', requireRole('artist'), upload.single('image'), (req, res) => {
+router.post('/galleries/:id/artworks', requireRole('artist'), upload.single('image'), async (req, res) => {
   const gallery = ownGallery(req, res);
-  if (!gallery) return;
+  if (!gallery) { if (req.file) removeByUrl(`/uploads/${req.file.filename}`); return; }
   if (!req.file) return res.status(400).json({ error: 'Choose an image to upload.' });
+  let image;
+  try { image = await processArtwork(req.file); } catch (err) { return res.status(400).json({ error: err.message }); }
   const body = req.body || {};
   const title = String(body.title || '').trim() || 'Untitled';
   const info = insertArtwork.run({
     gallery_id: gallery.id,
     artist_id: req.user.id,
-    image_url: publicUrl(req.file.filename),
+    image_url: image.url,
+    thumb_url: image.thumb_url,
+    width: image.width,
+    height: image.height,
     title: title.slice(0, 120),
     description: String(body.description || '').slice(0, 2000),
     style: cleanStyle(body.style),

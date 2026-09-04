@@ -6,7 +6,7 @@
  * - demo   (default) processes card details in-app with test card numbers. No keys, nothing leaves
  *          the server. Meant for development and demos.
  * - stripe used when STRIPE_SECRET_KEY is set. Uses Stripe Checkout so card details never touch
- *          this server. The client is redirected to Stripe and returned to /#/payments/return.
+ *          this server. The client is redirected to Stripe and returned to /payments/return.
  *
  * Both expose the same shape:
  *   name, mode ('inline' | 'redirect')
@@ -124,6 +124,34 @@ function createStripeProvider(secretKey, fetchImpl = globalThis.fetch) {
   };
 }
 
+/**
+ * Verify a Stripe webhook signature (Stripe-Signature: t=...,v1=...). Returns the parsed event or
+ * throws. `now` is injectable for tests.
+ */
+function verifyStripeWebhook(rawBody, header, secret, { toleranceSec = 300, now = Date.now() } = {}) {
+  if (!secret) throw new Error('STRIPE_WEBHOOK_SECRET is not configured.');
+  const parts = Object.create(null);
+  for (const item of String(header || '').split(',')) {
+    const [k, v] = item.split('=');
+    if (k && v) (parts[k.trim()] = parts[k.trim()] || []).push(v.trim());
+  }
+  const timestamp = Number(parts.t && parts.t[0]);
+  const signatures = parts.v1 || [];
+  if (!timestamp || !signatures.length) throw new Error('Malformed Stripe signature header.');
+  if (Math.abs(now / 1000 - timestamp) > toleranceSec) throw new Error('Stripe signature timestamp outside tolerance.');
+  const payload = `${timestamp}.${Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : rawBody}`;
+  const expected = crypto.createHmac('sha256', secret).update(payload).digest('hex');
+  const ok = signatures.some((sig) => sig.length === expected.length && crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected)));
+  if (!ok) throw new Error('Stripe signature mismatch.');
+  return JSON.parse(payload.slice(String(timestamp).length + 1));
+}
+
+/** Build a signature header the way Stripe does. Used by tests and local tooling. */
+function signStripePayload(rawBody, secret, timestamp = Math.floor(Date.now() / 1000)) {
+  const sig = crypto.createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex');
+  return `t=${timestamp},v1=${sig}`;
+}
+
 const provider = process.env.STRIPE_SECRET_KEY ? createStripeProvider(process.env.STRIPE_SECRET_KEY) : demoProvider;
 
-module.exports = { provider, demoProvider, createStripeProvider, validateCard, luhnValid };
+module.exports = { provider, demoProvider, createStripeProvider, validateCard, luhnValid, verifyStripeWebhook, signStripePayload };

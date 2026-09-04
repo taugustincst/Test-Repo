@@ -36,7 +36,8 @@ const APPT_SELECT = `
   SELECT ap.*,
          a.name AS artist_name, a.avatar_url AS artist_avatar_url,
          c.name AS client_name, c.avatar_url AS client_avatar_url,
-         p.studio_name, r.title AS request_title
+         p.studio_name, r.title AS request_title,
+         (SELECT rv.id FROM reviews rv WHERE rv.appointment_id = ap.id) AS review_id
   FROM appointments ap
   JOIN users a ON a.id = ap.artist_id
   JOIN users c ON c.id = ap.client_id

@@ -8,12 +8,12 @@ const multer = require('multer');
 const UPLOAD_DIR = process.env.INKWELL_UPLOAD_DIR || path.join(__dirname, '..', 'uploads');
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
+// SVG is deliberately excluded for user uploads: it can carry scripts. Demo seed art is written directly.
 const ALLOWED = {
   'image/jpeg': '.jpg',
   'image/png': '.png',
   'image/webp': '.webp',
   'image/gif': '.gif',
-  'image/svg+xml': '.svg',
 };
 
 const storage = multer.diskStorage({
@@ -29,7 +29,7 @@ const upload = multer({
   limits: { fileSize: 8 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     if (ALLOWED[file.mimetype]) return cb(null, true);
-    cb(new Error('Only JPEG, PNG, WebP, GIF, or SVG images are allowed.'));
+    cb(new Error('Only JPEG, PNG, WebP, or GIF images are allowed.'));
   },
 });
 
@@ -38,11 +38,12 @@ function publicUrl(filename) {
   return `/uploads/${filename}`;
 }
 
-/** Delete an uploaded file by its public URL, ignoring missing files. */
+/** Delete an uploaded file (and its thumbnail, if any) by its public URL, ignoring missing files. */
 function removeByUrl(url) {
   if (!url || !url.startsWith('/uploads/')) return;
   const file = path.join(UPLOAD_DIR, path.basename(url));
   fs.rm(file, { force: true }, () => {});
+  fs.rm(file.replace(/\.[a-z0-9]+$/i, '.thumb.webp'), { force: true }, () => {});
 }
 
 module.exports = { upload, UPLOAD_DIR, publicUrl, removeByUrl };
