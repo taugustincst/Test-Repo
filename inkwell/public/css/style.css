@@ -367,3 +367,52 @@ select option { background: var(--bg-elev); color: var(--text); }
 }
 @media (display-mode: standalone) { .topbar { position: sticky; } }
 html.native .install-banner { display: none; }
+
+/* Analytics: chart chrome on the dark surface (validated palette lives in charts.js) */
+.tabs .tab-link { padding: 10px 14px; color: var(--accent); white-space: nowrap; }
+.viz-filters .chip.active { background: var(--text); color: var(--bg); }
+.viz-loading .analytics { opacity: 0.55; transition: opacity 0.15s; }
+.viz-hero { padding: 22px 24px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg-elev); margin-bottom: 14px; }
+.viz-hero__label { color: var(--text-muted); font-size: 0.9rem; }
+.viz-hero__value { font-family: var(--font-body); font-size: 52px; font-weight: 600; line-height: 1.1; margin: 4px 0 8px; letter-spacing: -0.01em; }
+.viz-kpis .kpi { display: flex; flex-direction: column; gap: 2px; }
+.viz-kpis .kpi strong { font-family: var(--font-body); font-size: 1.7rem; font-weight: 600; }
+.viz-kpis .kpi > span:first-child { color: var(--text-muted); font-size: 0.85rem; }
+.viz-delta { font-size: 0.8rem; font-weight: 600; }
+.viz-delta--good { color: var(--green); }
+.viz-delta--bad { color: var(--accent); }
+.viz-delta--flat { color: var(--text-faint); font-weight: 500; }
+.viz-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 860px) { .viz-grid { grid-template-columns: 1fr; } }
+.viz-card { margin: 0 0 14px; padding: 18px 20px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg-elev); min-width: 0; }
+.viz-card__head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 12px; }
+.viz-card__head h3 { margin: 0; font-family: var(--font-body); font-size: 1rem; font-weight: 600; }
+.viz-card__plot { overflow: hidden; }
+.viz-card__plot svg { display: block; max-width: 100%; height: auto; font-family: var(--font-body); }
+.viz-card__table { overflow-x: auto; }
+.viz-axis { fill: var(--text-faint); font-size: 11px; font-variant-numeric: tabular-nums; }
+.viz-axis--strong { fill: var(--text-muted); font-size: 12px; }
+.viz-label { fill: var(--text); font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.viz-bar { transition: opacity 0.1s; }
+.viz-bar.is-hover { opacity: 0.8; }
+.viz-cell:focus, .viz-bar:focus { outline: none; }
+.viz-cell:hover { stroke: var(--text); stroke-width: 1; }
+.viz-legend { display: inline-flex; align-items: center; gap: 6px; font-size: 0.8rem; color: var(--text-muted); margin-right: 8px; }
+.viz-legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; margin-left: 8px; }
+.viz-legend i:first-child { margin-left: 0; }
+.viz-tip { position: absolute; z-index: 90; background: var(--bg); border: 1px solid var(--line-strong); border-radius: 10px; padding: 8px 10px; font-size: 0.82rem; pointer-events: none; box-shadow: var(--shadow); min-width: 120px; }
+.viz-tip__title { color: var(--text-muted); margin-bottom: 4px; }
+.viz-tip__row { display: flex; align-items: center; gap: 8px; }
+.viz-tip__row strong { font-variant-numeric: tabular-nums; }
+.viz-tip__row span:last-child { color: var(--text-muted); }
+.viz-tip__key { width: 12px; height: 3px; border-radius: 2px; flex-shrink: 0; }
+.viz-table td, .viz-table th { font-variant-numeric: tabular-nums; }
+.viz-top { display: grid; grid-template-columns: 24px 44px 1fr auto auto; gap: 12px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
+.viz-top:first-child { border-top: 0; }
+.viz-top__rank { color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.viz-top img { border-radius: 6px; object-fit: cover; }
+.viz-top__title { display: flex; flex-direction: column; min-width: 0; }
+.viz-top__title strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.viz-top__nums { display: flex; flex-direction: column; align-items: flex-end; min-width: 48px; }
+.viz-top__nums strong { font-variant-numeric: tabular-nums; }
+[data-spark] svg { display: block; }

@@ -1357,6 +1357,7 @@
         <button data-tab="bookings" class="${tab === 'bookings' ? 'active' : ''}">Bookings${pending ? ` (${pending})` : ''}</button>
         <button data-tab="proposals" class="${tab === 'proposals' ? 'active' : ''}">Proposals</button>
         <button data-tab="payments" class="${tab === 'payments' ? 'active' : ''}">Payments</button>
+        <a href="/analytics" class="tab-link">Analytics ↗</a>
       </div>
       <div data-panel></div>`;
 
@@ -1787,6 +1788,154 @@
     });
   }
 
+  /* ---------- artist analytics ---------- */
+
+  const WEEKDAYS_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const HOURS = Array.from({ length: 24 }, (_, h) => `${h % 12 === 0 ? 12 : h % 12}${h < 12 ? 'am' : 'pm'}`);
+
+  function deltaHtml(current, previous, { money: isMoney = false, upIsGood = true } = {}) {
+    if (!previous && !current) return '<span class="viz-delta viz-delta--flat">no change</span>';
+    if (!previous) return '<span class="viz-delta viz-delta--flat">new</span>';
+    const pct = Math.round(((current - previous) / previous) * 100);
+    if (pct === 0) return '<span class="viz-delta viz-delta--flat">→ same as before</span>';
+    const up = pct > 0;
+    const good = up === upIsGood;
+    return `<span class="viz-delta ${good ? 'viz-delta--good' : 'viz-delta--bad'}" title="Previous period: ${isMoney ? charts.money(previous) : charts.compact(previous)}">${up ? '▲' : '▼'} ${Math.abs(pct)}%</span>`;
+  }
+
+  function vizCard(id, title, subtitle, extra = '') {
+    return `
+      <figure class="viz-card" data-viz="${id}">
+        <figcaption class="viz-card__head">
+          <div><h3>${esc(title)}</h3>${subtitle ? `<div class="small muted">${esc(subtitle)}</div>` : ''}</div>
+          <div class="row">${extra}<button type="button" class="chip" data-viz-toggle aria-pressed="false">Table</button></div>
+        </figcaption>
+        <div class="viz-card__plot" data-plot></div>
+        <div class="viz-card__table" data-table hidden></div>
+      </figure>`;
+  }
+
+  async function viewAnalytics(params) {
+    if (!requireLogin('/analytics')) return;
+    if (state.user.role !== 'artist') { main.innerHTML = '<div class="empty"><h3>Analytics are for artist accounts</h3></div>'; return; }
+    const rangeKey = ['7d', '30d', '90d', '12m'].includes(params.get('range')) ? params.get('range') : '30d';
+    const first = !$('.analytics');
+    if (first) loading(); else main.classList.add('viz-loading');
+    let r;
+    try { r = await api.get('/api/artists/me/analytics', { range: rangeKey }); } catch (e) { main.classList.remove('viz-loading'); return handleError(e); }
+    const sm = r.summary; const pv = r.previous;
+    const labels = r.series.map((b) => b.label);
+    const pick = (k) => r.series.map((b) => b[k]);
+    const money = charts.money; const num = charts.compact;
+
+    main.innerHTML = `
+      <div class="analytics">
+        <div class="page-head">
+          <div><h1>Analytics</h1><p class="muted">How people find you, book you, and what they pay. ${esc(r.range.label)}, compared with the ${r.range.days} days before.</p></div>
+        </div>
+        <div class="filters viz-filters" role="group" aria-label="Date range">
+          ${[['7d', 'Last 7 days'], ['30d', 'Last 30 days'], ['90d', 'Last 90 days'], ['12m', 'Last 12 months']].map(([k, l]) => `<a class="chip ${k === rangeKey ? 'active' : ''}" href="/analytics?range=${k}">${k === rangeKey ? '✓ ' : ''}${l}</a>`).join('')}
+          <a class="btn btn--ghost btn--sm" style="margin-left:auto" href="/api/artists/me/analytics/export.csv?range=${rangeKey}" download rel="external">Export bookings CSV</a>
+        </div>
+
+        <section class="viz-hero">
+          <div class="viz-hero__label">Revenue collected</div>
+          <div class="viz-hero__value">${money(sm.revenue)}</div>
+          <div class="row">${deltaHtml(sm.revenue, pv.revenue, { money: true })}<span class="muted small">${sm.completed} completed session${sm.completed === 1 ? '' : 's'}${sm.avg_session_value ? ` · ${money(sm.avg_session_value)} average` : ''}</span></div>
+        </section>
+
+        <div class="kpis viz-kpis">
+          <div class="kpi"><span>Profile views</span><strong>${num(sm.profile_views)}</strong><div class="row row--between">${deltaHtml(sm.profile_views, pv.profile_views)}<span data-spark="profile_views"></span></div></div>
+          <div class="kpi"><span>Unique visitors</span><strong>${num(sm.unique_visitors)}</strong><div class="row row--between">${deltaHtml(sm.unique_visitors, pv.unique_visitors)}<span class="faint small">${num(sm.artwork_views)} artwork views</span></div></div>
+          <div class="kpi"><span>Booking requests</span><strong>${num(sm.booking_requests)}</strong><div class="row row--between">${deltaHtml(sm.booking_requests, pv.booking_requests)}<span data-spark="booking_requests"></span></div></div>
+          <div class="kpi"><span>Confirmed</span><strong>${sm.confirmation_rate === null ? '–' : `${sm.confirmation_rate}%`}</strong><div class="faint small">${sm.confirmed} of ${sm.booking_requests} requests${sm.booking_conversion !== null ? ` · ${sm.booking_conversion}% of booking page views convert` : ''}</div></div>
+          <div class="kpi"><span>New followers</span><strong>${num(sm.new_followers)}</strong><div class="row row--between">${deltaHtml(sm.new_followers, pv.new_followers)}<span data-spark="new_followers"></span></div></div>
+          <div class="kpi"><span>Rating</span><strong>${sm.rating === null ? '–' : sm.rating}</strong><div class="faint small">${sm.review_count} review${sm.review_count === 1 ? '' : 's'} all time · ${sm.reviews_in_range} new</div></div>
+        </div>
+
+        ${vizCard('views', 'Views', 'Profile and artwork views per ' + r.range.bucket)}
+        <div class="viz-grid">
+          ${vizCard('revenue', 'Revenue', 'Deposits and balances collected per ' + r.range.bucket)}
+          ${vizCard('bookings', 'Booking requests', 'New requests per ' + r.range.bucket)}
+        </div>
+        <div class="viz-grid">
+          ${vizCard('funnel', 'Booking funnel', 'From the booking page to a finished session')}
+          ${vizCard('clients', 'Clients', 'People who booked in this period')}
+        </div>
+        ${vizCard('heat', 'Busiest times', 'Confirmed and completed sessions by weekday and start hour')}
+        <div class="viz-grid">
+          ${vizCard('top', 'Top artworks', 'Most viewed pieces in this period')}
+          ${vizCard('ratings', 'Ratings', 'All reviews, by stars')}
+        </div>
+        ${vizCard('demand', 'Demand for your styles', 'Open client requests right now, in the styles you list')}
+      </div>`;
+    main.classList.remove('viz-loading');
+
+    const plot = (id) => $(`[data-viz="${id}"] [data-plot]`);
+    const tbl = (id) => $(`[data-viz="${id}"] [data-table]`);
+    const C = charts.TOKENS.series;
+
+    ['profile_views', 'booking_requests', 'new_followers'].forEach((k) => { const el = $(`[data-spark="${k}"]`); if (el) charts.sparkline({ el, values: pick(k) }); });
+
+    charts.line({ el: plot('views'), labels, series: [{ name: 'Profile views', values: pick('profile_views') }, { name: 'Artwork views', values: pick('artwork_views') }] });
+    $('[data-viz="views"] .viz-card__head .row').insertAdjacentHTML('afterbegin', `<span class="viz-legend"><i style="background:${C[0]}"></i>Profile views <i style="background:${C[1]}"></i>Artwork views</span>`);
+    charts.table({ el: tbl('views'), columns: ['Period', 'Profile views', 'Artwork views', 'Booking page views'], rows: r.series.map((b) => [b.label, b.profile_views, b.artwork_views, b.booking_page_views]) });
+
+    charts.column({ el: plot('revenue'), labels, values: pick('revenue'), format: money });
+    charts.table({ el: tbl('revenue'), columns: ['Period', 'Revenue'], rows: r.series.map((b) => [b.label, money(b.revenue)]) });
+
+    charts.column({ el: plot('bookings'), labels, values: pick('booking_requests') });
+    charts.table({ el: tbl('bookings'), columns: ['Period', 'Requests', 'Completed'], rows: r.series.map((b) => [b.label, b.booking_requests, b.completed]) });
+
+    const funnelRows = r.funnel.map((f, i) => ({ label: f.stage, value: f.count, detail: i > 0 && r.funnel[i - 1].count ? `(${Math.round((f.count / r.funnel[i - 1].count) * 100)}%)` : '' }));
+    charts.barsH({ el: plot('funnel'), rows: funnelRows, colors: charts.TOKENS.ordinal, labelWidth: 140 });
+    charts.table({ el: tbl('funnel'), columns: ['Stage', 'Count', 'Of previous stage'], rows: funnelRows.map((f) => [f.label, f.value, f.detail.replace(/[()]/g, '') || '–']) });
+
+    plot('clients').innerHTML = `
+      <div class="kpis" style="grid-template-columns:repeat(3,1fr)">
+        <div class="kpi"><strong>${r.clients.total}</strong><span>clients booked</span></div>
+        <div class="kpi"><strong>${r.clients.new}</strong><span>first time with you</span></div>
+        <div class="kpi"><strong>${r.clients.returning}</strong><span>returning</span></div>
+      </div>
+      <p class="small muted" style="margin:12px 0 0">${r.clients.total ? `${Math.round((r.clients.returning / r.clients.total) * 100)}% of the people who booked had been tattooed by you before.` : 'No bookings in this period yet.'}</p>`;
+    charts.table({ el: tbl('clients'), columns: ['Clients', 'Count'], rows: [['Booked', r.clients.total], ['First time', r.clients.new], ['Returning', r.clients.returning]] });
+
+    charts.heatmap({ el: plot('heat'), grid: r.heatmap, rowLabels: WEEKDAYS_SHORT, colLabels: HOURS });
+    charts.table({ el: tbl('heat'), columns: ['Weekday', ...HOURS.slice(8, 22)], rows: r.heatmap.map((row, i) => [WEEKDAYS_SHORT[i], ...row.slice(8, 22)]) });
+
+    plot('top').innerHTML = r.top_artworks.length ? `<div class="stack">${r.top_artworks.map((a, i) => `
+      <a class="viz-top" href="/artworks/${a.id}" data-artwork-link>
+        <span class="viz-top__rank">${i + 1}</span>
+        <img src="${attr(a.thumb_url || a.image_url)}" alt="" width="44" height="55">
+        <span class="viz-top__title"><strong>${esc(a.title)}</strong><span class="small muted">${esc(a.style || '')}</span></span>
+        <span class="viz-top__nums"><strong>${num(a.views)}</strong><span class="small muted">views</span></span>
+        <span class="viz-top__nums"><strong>${num(a.likes)}</strong><span class="small muted">likes</span></span>
+      </a>`).join('')}</div>` : '<div class="empty"><p>No artwork views yet in this period.</p></div>';
+    $$('[data-artwork-link]').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); openArtwork(a.getAttribute('href').split('/').pop()); }));
+    charts.table({ el: tbl('top'), columns: ['Artwork', 'Views', 'Likes', 'Comments'], rows: r.top_artworks.map((a) => [a.title, a.views, a.likes, a.comments]) });
+
+    const ratingRows = [5, 4, 3, 2, 1].map((k) => ({ label: `${k} star${k === 1 ? '' : 's'}`, value: r.ratings[k] }));
+    charts.barsH({ el: plot('ratings'), rows: ratingRows, labelWidth: 80 });
+    charts.table({ el: tbl('ratings'), columns: ['Stars', 'Reviews'], rows: ratingRows.map((x) => [x.label, x.value]) });
+
+    if (r.demand.length) {
+      charts.barsH({ el: plot('demand'), rows: r.demand.map((d) => ({ label: d.style, value: d.open_requests, detail: d.open_requests === 1 ? 'open request' : 'open requests' })), labelWidth: 130 });
+    } else {
+      plot('demand').innerHTML = '<div class="empty"><p>No open requests match your styles right now. <a class="link" href="/requests">Browse all requests</a>.</p></div>';
+    }
+    charts.table({ el: tbl('demand'), columns: ['Style', 'Open requests'], rows: r.demand.map((d) => [d.style, d.open_requests]) });
+
+    $$('[data-viz-toggle]').forEach((b) => b.addEventListener('click', () => {
+      const card = b.closest('[data-viz]');
+      const showTable = card.querySelector('[data-table]').hidden;
+      card.querySelector('[data-table]').hidden = !showTable;
+      card.querySelector('[data-plot]').hidden = showTable;
+      b.setAttribute('aria-pressed', String(showTable));
+      b.classList.toggle('active', showTable);
+      b.textContent = showTable ? 'Chart' : 'Table';
+    }));
+  }
+
   /* ---------- legal pages ---------- */
 
   const LEGAL_NOTE = '<div class="demo-box" style="margin-bottom:18px">This is a starting template. Have a lawyer in your jurisdiction review it before launch and replace the placeholders.</div>';
@@ -1969,6 +2118,7 @@
     [/^\/privacy$/, () => viewPrivacy()],
     [/^\/admin$/, (m, p) => viewAdmin(p)],
     [/^\/notifications$/, () => viewNotifications()],
+    [/^\/analytics$/, (m, p) => viewAnalytics(p)],
   ];
 
   function route() {
@@ -1976,6 +2126,7 @@
     cleanupFns.forEach((fn) => fn());
     cleanupFns = [];
     closeModal();
+    if (window.charts) charts.hideTip();
     renderBanner();
     const path = location.pathname.replace(/\/+$/, '') || '/';
     const params = new URLSearchParams(location.search);

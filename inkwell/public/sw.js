@@ -4,7 +4,7 @@
 const VERSION = '__VERSION__';
 const SHELL_CACHE = `inkwell-shell-${VERSION}`;
 const MEDIA_CACHE = 'inkwell-media-v1';
-const SHELL = ['/', '/offline.html', `/css/style.css?v=${VERSION}`, `/js/api.js?v=${VERSION}`, `/js/app.js?v=${VERSION}`, '/manifest.json', '/icon-192.png', '/icon-512.png'];
+const SHELL = ['/', '/offline.html', `/css/style.css?v=${VERSION}`, `/js/api.js?v=${VERSION}`, `/js/charts.js?v=${VERSION}`, `/js/app.js?v=${VERSION}`, '/manifest.json', '/icon-192.png', '/icon-512.png'];
 const MEDIA_LIMIT = 300;
 
 self.addEventListener('install', (event) => {

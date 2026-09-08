@@ -243,6 +243,12 @@ const ARTISTS = [
 
 const CLIENTS = [
   { name: 'Jordan Lee', email: 'jordan@inkwell.demo', location: 'Portland, OR', bio: 'Collecting a full sleeve one artist at a time.' },
+  { name: 'Elena Rossi', email: 'elena@inkwell.demo', location: 'Portland, OR', bio: 'Botanicals and blackwork.' },
+  { name: 'Kwame Mensah', email: 'kwame@inkwell.demo', location: 'Austin, TX', bio: 'Traditional all the way.' },
+  { name: 'Sasha Ivanova', email: 'sasha@inkwell.demo', location: 'Los Angeles, CA', bio: 'Slowly building a Japanese sleeve.' },
+  { name: 'Hana Sato', email: 'hana@inkwell.demo', location: 'Brooklyn, NY', bio: 'Small pieces, lots of them.' },
+  { name: 'Noah Williams', email: 'noah@inkwell.demo', location: 'Chicago, IL', bio: 'Realism collector.' },
+  { name: 'Ines Ferreira', email: 'ines@inkwell.demo', location: 'Denver, CO', bio: 'Colour, always.' },
   { name: 'Amara Okafor', email: 'amara@inkwell.demo', location: 'Brooklyn, NY', bio: 'First tattoo soon. Nervous and excited.' },
   { name: 'Ben Carter', email: 'ben@inkwell.demo', location: 'Austin, TX', bio: 'Traditional fan. Bold will hold.' },
   { name: 'Lucía Fernández', email: 'lucia@inkwell.demo', location: 'Los Angeles, CA', bio: 'Working on a Japanese back piece.' },
@@ -296,7 +302,7 @@ function seed() {
   `);
   const insertLike = db.prepare('INSERT OR IGNORE INTO likes (user_id, artwork_id) VALUES (?, ?)');
   const insertComment = db.prepare('INSERT INTO comments (artwork_id, user_id, body) VALUES (?, ?, ?)');
-  const insertFollow = db.prepare('INSERT OR IGNORE INTO follows (follower_id, artist_id) VALUES (?, ?)');
+  const insertFollow = db.prepare(`INSERT OR IGNORE INTO follows (follower_id, artist_id, created_at) VALUES (?, ?, datetime('now', ?))`);
   const insertAvailability = db.prepare('INSERT INTO availability (artist_id, weekday, start_time, end_time) VALUES (?, ?, ?, ?)');
   const insertRequest = db.prepare(`
     INSERT INTO tattoo_requests (client_id, title, description, style, placement, size, budget_min, budget_max, location, status, created_at)
@@ -354,7 +360,7 @@ function seed() {
 
     CLIENTS.forEach((c, i) => {
       const avatar = writeSvg(`seed-client-${i}.svg`, makeAvatar(c.name, i + 3));
-      const info = insertUser.run(c.email, passwordHash, c.name, 'client', avatar, c.bio, c.location, `-${60 - i * 7} days`);
+      const info = insertUser.run(c.email, passwordHash, c.name, 'client', avatar, c.bio, c.location, `-${Math.max(1, 60 - i * 5)} days`);
       clientIds.push(Number(info.lastInsertRowid));
     });
 
@@ -370,8 +376,8 @@ function seed() {
       if (rand() < 0.5) insertComment.run(artworkId, pick(everyone), pick(COMMENTS));
       if (rand() < 0.2) insertComment.run(artworkId, pick(clientIds), pick(COMMENTS));
     });
-    clientIds.forEach((cid) => artistIds.filter(() => rand() < 0.5).forEach((aid) => insertFollow.run(cid, aid)));
-    artistIds.forEach((aid) => artistIds.filter((o) => o !== aid && rand() < 0.3).forEach((o) => insertFollow.run(aid, o)));
+    clientIds.forEach((cid) => artistIds.filter(() => rand() < 0.5).forEach((aid) => insertFollow.run(cid, aid, `-${between(0, 120)} days`)));
+    artistIds.forEach((aid) => artistIds.filter((o) => o !== aid && rand() < 0.3).forEach((o) => insertFollow.run(aid, o, `-${between(0, 120)} days`)));
 
     const requests = [
       { client: 0, title: 'Blackwork forearm band with botanical detail', style: 'Blackwork', placement: 'Forearm', size: 'Medium (4-6 in)', min: 300, max: 600, location: 'Portland, OR', status: 'open', desc: 'Looking for a solid blackwork band around the forearm, roughly two inches wide, with some fern or leaf shapes breaking out of the top and bottom edges. Open to the artist\'s interpretation.' },
@@ -413,6 +419,71 @@ function seed() {
     appt = Number(insertAppointment.run(artistIds[3], clientIds[1], null, s, e, 'Tiny wrist piece.', 'completed', 50, 150).lastInsertRowid);
     insertPayment.run(appt, clientIds[1], artistIds[3], 'deposit', 50, 'paid', 'demo', 'demo_ch_seed2', '4242', 'Booking deposit', 'paid');
     insertPayment.run(appt, clientIds[1], artistIds[3], 'balance', 100, 'paid', 'demo', 'demo_ch_seed3', '4242', 'Session balance', 'paid');
+
+    // Six months of history so the analytics dashboard has something to show. Sofia (index 5)
+    // is left untouched because the test suite asserts exact numbers for her.
+    const insertReview = db.prepare(`INSERT INTO reviews (appointment_id, artist_id, client_id, rating, body, created_at) VALUES (?, ?, ?, ?, ?, datetime('now', ?))`);
+    const insertEvent = db.prepare(`INSERT INTO analytics_events (artist_id, kind, target_id, visitor_key, created_at) VALUES (?, ?, ?, ?, datetime('now', ?, ?))`);
+    const insertPastAppt = db.prepare(`
+      INSERT INTO appointments (artist_id, client_id, request_id, starts_at, ends_at, note, status, deposit_amount, price, created_at)
+      VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, datetime('now', ?))`);
+    const insertPastPayment = db.prepare(`
+      INSERT INTO payments (appointment_id, payer_id, payee_id, kind, amount, status, provider, provider_ref, card_last4, note, created_at, paid_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'demo', ?, '4242', ?, datetime('now', ?), datetime('now', ?))`);
+    const artworksByArtist = db.prepare('SELECT id FROM artworks WHERE artist_id = ?');
+    const REVIEW_TEXTS = ['Exactly what I asked for and healed perfectly.', 'Calm, clean studio and a steady hand.', 'Took the time to get the design right first.', 'Slightly long wait but the result is worth it.', 'Would book again without hesitation.', ''];
+    const pad = (n) => String(n).padStart(2, '0');
+    let pastCounter = 0;
+    ARTISTS.forEach((a, i) => {
+      if (i === 5) return;
+      const artistId = artistIds[i];
+      const artworkIdsFor = artworksByArtist.all(artistId).map((r) => r.id);
+      const popularity = [1.4, 1.1, 1.3, 1.6, 0.9][i] || 1;
+      // Past sessions.
+      const sessions = between(18, 30);
+      for (let k = 0; k < sessions; k += 1) {
+        const daysAgo = between(2, 180);
+        const start = new Date(); start.setDate(start.getDate() - daysAgo);
+        const hour = pick([10, 11, 12, 13, 14, 15, 16, 17]);
+        const date = `${start.getFullYear()}-${pad(start.getMonth() + 1)}-${pad(start.getDate())}`;
+        const startsAt = `${date}T${pad(hour)}:00`;
+        const endsAt = `${date}T${pad(hour + Math.max(1, Math.round(a.session / 60)))}:00`;
+        const roll = rand();
+        const status = roll < 0.8 ? 'completed' : (roll < 0.9 ? 'cancelled' : 'declined');
+        const price = status === 'completed' ? between(15, 90) * 10 : null;
+        const createdAgo = daysAgo + between(3, 21);
+        const clientId = clientIds[between(0, clientIds.length - 1)];
+        const apptId = Number(insertPastAppt.run(artistId, clientId, startsAt, endsAt, pick(['Continuing the sleeve.', 'Flash piece.', 'Custom design from consult.', '']), status, a.deposit, price, `-${createdAgo} days`).lastInsertRowid);
+        pastCounter += 1;
+        if (a.deposit) {
+          const depositStatus = status === 'completed' ? 'paid' : (status === 'declined' ? 'refunded' : 'forfeited');
+          insertPastPayment.run(apptId, clientId, artistId, 'deposit', a.deposit, depositStatus, `demo_ch_hist${pastCounter}`, 'Booking deposit', `-${createdAgo} days`, `-${createdAgo} days`);
+        }
+        if (status === 'completed' && price - a.deposit > 0) {
+          insertPastPayment.run(apptId, clientId, artistId, 'balance', price - a.deposit, 'paid', `demo_ch_histb${pastCounter}`, 'Session balance', `-${daysAgo} days`, `-${daysAgo} days`);
+        }
+        if (status === 'completed' && rand() < 0.55) {
+          const rating = rand() < 0.7 ? 5 : (rand() < 0.75 ? 4 : 3);
+          insertReview.run(apptId, artistId, clientId, rating, pick(REVIEW_TEXTS), `-${Math.max(0, daysAgo - between(1, 5))} days`);
+        }
+      }
+      // Ninety days of views with a weekend lift and a slow upward trend.
+      for (let d = 90; d >= 0; d -= 1) {
+        const when = new Date(); when.setDate(when.getDate() - d);
+        const weekend = [0, 6].includes(when.getDay()) ? 1.35 : 1;
+        const trend = 1 + (90 - d) / 180;
+        const profileViews = Math.round((3 + rand() * 9) * popularity * weekend * trend);
+        for (let v = 0; v < profileViews; v += 1) {
+          const visitor = rand() < 0.3 ? `u:${clientIds[between(0, clientIds.length - 1)]}` : `a:${Math.floor(rand() * 1e12).toString(36)}`;
+          const dayOffset = `-${d} days`; const hourOffset = `+${between(8, 22)} hours`;
+          insertEvent.run(artistId, 'profile_view', null, visitor, dayOffset, hourOffset);
+          if (rand() < 0.75 && artworkIdsFor.length) insertEvent.run(artistId, 'artwork_view', pick(artworkIdsFor), visitor, dayOffset, hourOffset);
+          if (rand() < 0.35 && artworkIdsFor.length) insertEvent.run(artistId, 'artwork_view', pick(artworkIdsFor), visitor, dayOffset, hourOffset);
+          if (rand() < 0.25) insertEvent.run(artistId, 'gallery_view', null, visitor, dayOffset, hourOffset);
+          if (rand() < 0.18) insertEvent.run(artistId, 'booking_page_view', null, visitor, dayOffset, hourOffset);
+        }
+      }
+    });
 
     // Messages.
     const chat = [

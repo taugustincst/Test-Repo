@@ -85,6 +85,7 @@ function renderIndex(urlPath) {
     .replace('<!--META-->', tags)
     .replace('/css/style.css"', `/css/style.css?v=${pkg.version}"`)
     .replace('/js/api.js"', `/js/api.js?v=${pkg.version}"`)
+    .replace('/js/charts.js"', `/js/charts.js?v=${pkg.version}"`)
     .replace('/js/app.js"', `/js/app.js?v=${pkg.version}"`);
 }
 
@@ -144,6 +145,7 @@ function createApp(options = {}) {
   });
 
   app.use('/api/auth', require('./routes/auth'));
+  app.use('/api/artists/me/analytics', require('./routes/analytics')); // before the artists router's /:id
   app.use('/api/artists', require('./routes/artists'));
   app.use('/api', require('./routes/reviews')); // before bookings: its /appointments/:id/review must win over /appointments/:id/:action
   app.use('/api', require('./routes/bookings'));
