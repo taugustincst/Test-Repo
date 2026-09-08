@@ -219,6 +219,33 @@ CREATE TABLE IF NOT EXISTS webhook_events (
   received_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('web', 'fcm')),
+  endpoint TEXT NOT NULL UNIQUE,
+  p256dh TEXT,
+  auth TEXT,
+  device_name TEXT DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  last_used_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS notifications (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  body TEXT DEFAULT '',
+  url TEXT,
+  read_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS app_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -240,6 +267,8 @@ CREATE INDEX IF NOT EXISTS idx_payments_users ON payments(payer_id, payee_id);
 CREATE INDEX IF NOT EXISTS idx_email_log_user ON email_log(to_user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_reviews_artist ON reviews(artist_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_push_user ON push_subscriptions(user_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, read_at, created_at);
 `;
 
 db.exec(SCHEMA);
@@ -260,6 +289,7 @@ ensureColumn('users', 'terms_accepted_at', 'TEXT');
 ensureColumn('artworks', 'thumb_url', 'TEXT');
 ensureColumn('artworks', 'width', 'INTEGER');
 ensureColumn('artworks', 'height', 'INTEGER');
+ensureColumn('users', 'push_notifications', 'INTEGER NOT NULL DEFAULT 1');
 // Indexes on migrated columns must come after the columns exist.
 db.exec('CREATE INDEX IF NOT EXISTS idx_users_suspended ON users(suspended_at)');
 

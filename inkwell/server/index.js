@@ -8,12 +8,16 @@ const cookieParser = require('cookie-parser');
 const { db } = require('./db');
 const { loadUser } = require('./auth');
 const { UPLOAD_DIR } = require('./upload');
-const { securityHeaders, uploadHeaders, rateLimit, originCheck, requestLogger } = require('./security');
+const { securityHeaders, uploadHeaders, rateLimit, originCheck, cors, requestLogger } = require('./security');
 const pkg = require('../package.json');
 
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const INDEX_HTML = fs.readFileSync(path.join(PUBLIC_DIR, 'index.html'), 'utf8');
 const APP_URL = (process.env.APP_URL || `http://localhost:${process.env.PORT || 3000}`).replace(/\/$/, '');
+// Origins the native shell loads from, plus anything listed in CORS_ORIGINS (comma separated).
+const APP_ORIGINS = ['capacitor://localhost', 'ionic://localhost', 'http://localhost', 'https://localhost',
+  ...String(process.env.CORS_ORIGINS || '').split(',').map((o) => o.trim()).filter(Boolean)];
+const SW_SOURCE = fs.readFileSync(path.join(PUBLIC_DIR, 'sw.js'), 'utf8');
 const isProd = process.env.NODE_ENV === 'production';
 const isTest = process.env.NODE_ENV === 'test';
 
@@ -121,7 +125,8 @@ function createApp(options = {}) {
   app.use(express.urlencoded({ extended: false, limit: '1mb' }));
   app.use(cookieParser());
   app.use(loadUser);
-  app.use('/api', originCheck([APP_URL]));
+  app.use('/api', cors(APP_ORIGINS));
+  app.use('/api', originCheck([APP_URL, ...APP_ORIGINS]));
 
   if (useRateLimits) {
     const limits = options.limits || {};
@@ -148,6 +153,9 @@ function createApp(options = {}) {
   app.use('/api/payments', require('./routes/payments'));
   app.use('/api/reports', require('./routes/reports'));
   app.use('/api/admin', require('./routes/admin'));
+  const pushRoutes = require('./routes/push');
+  app.use('/api/push', pushRoutes.push);
+  app.use('/api/notifications', pushRoutes.notifications);
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found.' }));
 
   app.use('/uploads', uploadHeaders, express.static(UPLOAD_DIR, { maxAge: '30d', immutable: true, index: false, dotfiles: 'deny' }));
@@ -155,6 +163,21 @@ function createApp(options = {}) {
     res.type('text/plain').send(['User-agent: *', 'Allow: /', 'Disallow: /api/', 'Disallow: /admin', 'Disallow: /settings', 'Disallow: /messages', 'Disallow: /dashboard', 'Disallow: /appointments', `Sitemap: ${APP_URL}/sitemap.xml`, ''].join('\n'));
   });
   app.get('/sitemap.xml', (_req, res) => { res.type('application/xml').send(sitemap()); });
+  // The service worker must never be cached by intermediaries and carries the app version so a
+  // deploy invalidates the offline shell.
+  app.get('/sw.js', (_req, res) => {
+    res.set({ 'Cache-Control': 'no-cache', 'Service-Worker-Allowed': '/' });
+    res.type('application/javascript').send(SW_SOURCE.replace(/__VERSION__/g, pkg.version));
+  });
+  // Deep-link association files for the native apps, served only once the ids are configured.
+  app.get('/.well-known/assetlinks.json', (_req, res) => {
+    if (!process.env.ANDROID_PACKAGE || !process.env.ANDROID_CERT_SHA256) return res.status(404).json({ error: 'Not configured.' });
+    res.json([{ relation: ['delegate_permission/common.handle_all_urls'], target: { namespace: 'android_app', package_name: process.env.ANDROID_PACKAGE, sha256_cert_fingerprints: process.env.ANDROID_CERT_SHA256.split(',').map((f) => f.trim()) } }]);
+  });
+  app.get('/.well-known/apple-app-site-association', (_req, res) => {
+    if (!process.env.IOS_TEAM_ID || !process.env.IOS_BUNDLE_ID) return res.status(404).json({ error: 'Not configured.' });
+    res.json({ applinks: { apps: [], details: [{ appID: `${process.env.IOS_TEAM_ID}.${process.env.IOS_BUNDLE_ID}`, paths: ['/artists/*', '/artworks/*', '/galleries/*', '/requests/*', '/appointments', '/messages/*', '/notifications', '/reset'] }] }, webcredentials: { apps: [`${process.env.IOS_TEAM_ID}.${process.env.IOS_BUNDLE_ID}`] } });
+  });
   app.use(express.static(PUBLIC_DIR, { index: false, maxAge: isProd ? '7d' : 0, dotfiles: 'deny' }));
 
   // Any other path is the single-page app, with share metadata for the page in question.
@@ -202,6 +225,8 @@ function configWarnings() {
     if (!process.env.STRIPE_SECRET_KEY) warnings.push('STRIPE_SECRET_KEY is not set: the DEMO card processor is active. Real money is not being charged.');
     if (process.env.STRIPE_SECRET_KEY && !process.env.STRIPE_WEBHOOK_SECRET) warnings.push('STRIPE_WEBHOOK_SECRET is not set; payments completed without the client returning will not be recorded.');
     if (!process.env.SMTP_URL && !process.env.SMTP_HOST) warnings.push('No SMTP configuration: emails are only logged, and password resets cannot reach users.');
+    if (!process.env.VAPID_PUBLIC_KEY) warnings.push('VAPID keys are not set; generated keys are stored in the database, which is fine unless you run several instances.');
+    if (!process.env.FCM_SERVICE_ACCOUNT_JSON) warnings.push('FCM_SERVICE_ACCOUNT_JSON is not set: the native iOS/Android apps will not receive push notifications.');
     if (!process.env.TRUST_PROXY) warnings.push('TRUST_PROXY is not set; behind a reverse proxy, rate limits will see the proxy address and secure cookies may not work.');
     if (process.env.INKWELL_SKIP_SEED !== '1') warnings.push('INKWELL_SKIP_SEED is not 1: an empty database would be filled with demo accounts that share a public password.');
   }

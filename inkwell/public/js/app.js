@@ -2,7 +2,10 @@
 (function () {
   'use strict';
 
-  const state = { user: null, styles: [], unread: 0, ready: false, pay: { provider: 'demo', mode: 'inline', test_cards: [], refund_window_hours: 48 } };
+  const state = { user: null, styles: [], unread: 0, notifUnread: 0, ready: false, pay: { provider: 'demo', mode: 'inline', test_cards: [], refund_window_hours: 48 }, installPrompt: null, swRegistration: null };
+  const isNative = () => api.isNative();
+  const isStandalone = () => window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+  const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent) && !window.MSStream;
   const main = document.getElementById('main');
   const navEl = document.getElementById('nav');
   const modalRoot = document.getElementById('modal-root');
@@ -240,6 +243,7 @@
       <a href="/artists" class="${active('/artists')}">Artists</a>
       <a href="/requests" class="${active('/requests')}">Client requests</a>
       ${u ? `
+        <a href="/notifications" class="${active('/notifications')}" title="Notifications" aria-label="Notifications">🔔<span class="nav-label">Notifications</span>${state.notifUnread ? `<span class="badge-dot">${state.notifUnread}</span>` : ''}</a>
         <a href="/messages" class="${active('/messages')}">Messages${state.unread ? `<span class="badge-dot">${state.unread}</span>` : ''}</a>
         <a href="/appointments" class="${active('/appointments')}">Bookings</a>
         <a href="/dashboard" class="${active('/dashboard')}">Dashboard</a>
@@ -252,14 +256,45 @@
       `}`;
     const logout = navEl.querySelector('[data-logout]');
     if (logout) logout.addEventListener('click', async () => {
-      await api.post('/api/auth/logout');
-      state.user = null; state.unread = 0;
+      try { await disablePush().catch(() => {}); await api.post('/api/auth/logout'); } catch { /* already out */ }
+      api.clearToken();
+      state.user = null; state.unread = 0; state.notifUnread = 0;
       toast('Signed out');
       navigate('/');
       renderNav();
     });
     navEl.classList.remove('open');
     document.getElementById('nav-toggle').setAttribute('aria-expanded', 'false');
+    renderTabbar();
+  }
+
+  const ICONS = {
+    explore: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>',
+    artists: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg>',
+    requests: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5h16v11H8l-4 4z"/></svg>',
+    bookings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>',
+    inbox: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 8a6 6 0 0 1 12 0v5l2 3H4l2-3z"/><path d="M10 19a2 2 0 0 0 4 0"/></svg>',
+    menu: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M4 12h16M4 17h16"/></svg>',
+    login: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 17l5-5-5-5M15 12H3M21 4v16"/></svg>',
+  };
+
+  function renderTabbar() {
+    const bar = document.getElementById('tabbar');
+    if (!bar) return;
+    const path = location.pathname || '/';
+    const u = state.user;
+    const tab = (href, icon, label, badge) => `<a href="${href}" class="${path === href || (href !== '/' && path.startsWith(href)) ? 'active' : ''}" aria-label="${label}">${ICONS[icon]}<span>${label}</span>${badge ? `<b class="badge-dot">${badge}</b>` : ''}</a>`;
+    bar.innerHTML = [
+      tab('/', 'explore', 'Explore'),
+      tab('/artists', 'artists', 'Artists'),
+      u ? tab('/appointments', 'bookings', 'Bookings') : tab('/requests', 'requests', 'Requests'),
+      u ? tab('/notifications', 'inbox', 'Inbox', state.notifUnread + state.unread) : tab('/login', 'login', 'Log in'),
+      `<button type="button" data-tab-menu aria-label="Menu">${ICONS.menu}<span>Menu</span></button>`,
+    ].join('');
+    bar.querySelector('[data-tab-menu]').addEventListener('click', () => {
+      const open = navEl.classList.toggle('open');
+      document.getElementById('nav-toggle').setAttribute('aria-expanded', String(open));
+    });
   }
 
   document.getElementById('nav-toggle').addEventListener('click', (e) => {
@@ -270,9 +305,112 @@
   async function refreshUnread() {
     if (!state.user) return;
     try {
-      const { unread } = await api.get('/api/messages/unread');
-      if (unread !== state.unread) { state.unread = unread; renderNav(); }
+      const [{ unread }, notif] = await Promise.all([api.get('/api/messages/unread'), api.get('/api/notifications/unread')]);
+      if (unread !== state.unread || notif.unread !== state.notifUnread) { state.unread = unread; state.notifUnread = notif.unread; renderNav(); }
     } catch { /* ignore */ }
+  }
+
+  /* ---------- progressive web app: service worker, install, push ---------- */
+
+  function registerServiceWorker() {
+    if (!('serviceWorker' in navigator) || isNative()) return;
+    navigator.serviceWorker.register('/sw.js').then((reg) => {
+      state.swRegistration = reg;
+      reg.addEventListener('updatefound', () => {
+        const worker = reg.installing;
+        if (!worker) return;
+        worker.addEventListener('statechange', () => {
+          if (worker.state === 'installed' && navigator.serviceWorker.controller) {
+            const el = document.createElement('div');
+            el.className = 'toast';
+            el.innerHTML = 'A new version is ready. <button class="link" style="color:inherit;text-decoration:underline">Reload</button>';
+            el.querySelector('button').addEventListener('click', () => worker.postMessage({ type: 'SKIP_WAITING' }));
+            toastRoot.appendChild(el);
+          }
+        });
+      });
+    }).catch(() => {});
+    let reloading = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if (!reloading) { reloading = true; location.reload(); } });
+  }
+
+  window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); state.installPrompt = e; });
+  window.addEventListener('appinstalled', () => { state.installPrompt = null; toast('Inkwell is on your home screen'); });
+
+  async function promptInstall() {
+    if (state.installPrompt) {
+      state.installPrompt.prompt();
+      const { outcome } = await state.installPrompt.userChoice;
+      if (outcome === 'accepted') state.installPrompt = null;
+      return;
+    }
+    if (isIOS()) {
+      openModal(`<div class="modal__panel"><div class="modal__head"><h3 style="margin:0">Add Inkwell to your home screen</h3><button class="modal__close" data-close-modal>×</button></div><div class="modal__body"><p>In Safari, tap the <strong>Share</strong> button, then <strong>Add to Home Screen</strong>. Inkwell will open full screen and can send you notifications.</p></div></div>`, { small: true });
+      return;
+    }
+    toast('Use your browser menu to install Inkwell');
+  }
+
+  const urlBase64ToUint8Array = (base64) => {
+    const padding = '='.repeat((4 - (base64.length % 4)) % 4);
+    const raw = atob((base64 + padding).replace(/-/g, '+').replace(/_/g, '/'));
+    return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+  };
+
+  function pushSupported() { return !isNative() && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window; }
+
+  async function currentPushSubscription() {
+    if (!pushSupported()) return null;
+    const reg = state.swRegistration || await navigator.serviceWorker.ready;
+    return reg.pushManager.getSubscription();
+  }
+
+  async function enablePush() {
+    if (isNative()) return enableNativePush();
+    if (!pushSupported()) { toast(isIOS() && !isStandalone() ? 'Add Inkwell to your home screen first, then enable notifications' : 'Notifications are not supported in this browser', 'error'); return false; }
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') { toast('Notifications are blocked for this site', 'error'); return false; }
+    const { public_key: key } = await api.get('/api/push/config');
+    const reg = state.swRegistration || await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(key) });
+    await api.post('/api/push/subscribe', { kind: 'web', subscription: sub.toJSON(), device_name: navigator.userAgent.slice(0, 80) });
+    return true;
+  }
+
+  async function disablePush() {
+    const sub = await currentPushSubscription();
+    if (sub) { await api.del('/api/push/subscribe', { endpoint: sub.endpoint }); await sub.unsubscribe(); }
+  }
+
+  /* Native shell (Capacitor): register the device with Firebase and hand the token to the server. */
+  async function enableNativePush() {
+    const plugin = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.PushNotifications;
+    if (!plugin) { toast('Push is not available in this build', 'error'); return false; }
+    const perm = await plugin.requestPermissions();
+    if (perm.receive !== 'granted') { toast('Notifications are off for Inkwell in your phone settings', 'error'); return false; }
+    await plugin.register();
+    return true;
+  }
+
+  function setupNativeBridge() {
+    if (!isNative()) return;
+    document.documentElement.classList.add('native');
+    const plugins = window.Capacitor.Plugins || {};
+    if (plugins.PushNotifications) {
+      plugins.PushNotifications.addListener('registration', (token) => {
+        if (state.user) api.post('/api/push/subscribe', { kind: 'fcm', token: token.value, device_name: window.Capacitor.getPlatform() }).catch(() => {});
+      });
+      plugins.PushNotifications.addListener('pushNotificationActionPerformed', (action) => {
+        const url = action.notification && action.notification.data && action.notification.data.url;
+        if (url) navigate(url);
+      });
+    }
+    if (plugins.App) {
+      plugins.App.addListener('appUrlOpen', (event) => {
+        try { const u = new URL(event.url); navigate(u.pathname + u.search); } catch { /* ignore */ }
+      });
+      plugins.App.addListener('backButton', ({ canGoBack }) => { if (canGoBack) history.back(); else plugins.App.exitApp(); });
+    }
   }
 
   /* ---------- views ---------- */
@@ -362,6 +500,13 @@
         </div>
         <div class="hero__mosaic" aria-hidden="true">${mosaic.map((a) => `<img src="${attr(a.thumb_url || a.image_url)}" alt="">`).join('')}</div>
       </section>
+      ${!isStandalone() && !isNative() && (state.installPrompt || isIOS()) && !localStorage.getItem('inkwell_install_dismissed') ? `
+      <div class="install-banner" data-install-banner>
+        <img src="/icon-192.png" alt="" width="44" height="44">
+        <div><strong>Get the Inkwell app</strong><div class="small muted">Add it to your home screen for full-screen browsing and notifications.</div></div>
+        <button class="btn btn--sm" data-install>Install</button>
+        <button class="modal__close" data-install-dismiss aria-label="Dismiss">×</button>
+      </div>` : ''}
       <section class="section" style="margin-top:10px">
         <div class="section__head">
           <h2>Fresh work</h2>
@@ -381,6 +526,11 @@
         <div class="row" style="justify-content:center;margin-top:10px"><button class="btn btn--ghost" data-more hidden>Load more</button></div>
       </section>`;
 
+    const banner = $('[data-install-banner]');
+    if (banner) {
+      $('[data-install]', banner).addEventListener('click', promptInstall);
+      $('[data-install-dismiss]', banner).addEventListener('click', () => { try { localStorage.setItem('inkwell_install_dismissed', '1'); } catch { /* ignore */ } banner.remove(); });
+    }
     const feedEl = $('[data-feed]');
     const moreBtn = $('[data-more]');
     async function load(append = false) {
@@ -1380,6 +1530,7 @@
           <h3>Recent emails</h3>
           <div class="loading">Loading</div>
         </div>
+        <div class="card" style="margin-top:14px" data-push-card><div class="loading">Loading</div></div>
         <div class="card" style="margin-top:14px">
           <h3>Your account</h3>
           <div class="list-item"><div><strong>Download your data</strong><div class="small muted">Everything we hold about you, as a JSON file.</div></div><a class="btn btn--ghost btn--sm" href="/api/auth/me/export" download rel="external">Export</a></div>
@@ -1387,6 +1538,7 @@
           <div class="list-item"><div><strong>Delete account</strong><div class="small muted">Removes your profile, galleries, requests and messages. Payment records are kept without your details.</div></div><button class="btn btn--danger btn--sm" data-delete-account>Delete</button></div>
         </div>
       </div>`;
+    renderPushCard($('[data-push-card]'));
     $('[data-logout-all]').addEventListener('click', async () => {
       if (!confirm('Sign out of every device?')) return;
       try { await api.post('/api/auth/logout-all'); state.user = null; renderNav(); navigate('/'); } catch (err) { handleError(err); }
@@ -1471,6 +1623,7 @@
       try {
         const r = await api.post('/api/auth/login', formData(form));
         state.user = r.user; renderNav(); refreshUnread();
+        if (isNative()) enableNativePush().catch(() => {});
         toast(`Welcome back, ${r.user.name.split(' ')[0]}`);
         navigate(next);
       } catch (err) { handleError(err, $('.error', form)); }
@@ -1570,6 +1723,67 @@
         toast('Password updated. You are signed in.');
         navigate('/');
       } catch (err) { handleError(err, $('.error', form)); }
+    });
+  }
+
+  /* ---------- notifications ---------- */
+
+  async function viewNotifications() {
+    if (!requireLogin('/notifications')) return;
+    loading();
+    let r;
+    try { r = await api.get('/api/notifications', { limit: 100 }); } catch (e) { return handleError(e); }
+    main.innerHTML = `
+      <div class="page-head">
+        <div><h1>Notifications</h1><p class="muted">Bookings, payments, proposals and messages, in one place.</p></div>
+        <div class="row">${r.unread ? '<button class="btn btn--ghost btn--sm" data-read-all>Mark all read</button>' : ''}<a class="btn btn--subtle btn--sm" href="/settings#notifications">Settings</a></div>
+      </div>
+      ${r.notifications.length ? `<div class="stack">${r.notifications.map((n) => `
+        <a class="card notif ${n.read_at ? '' : 'notif--unread'}" href="${attr(n.url || '/notifications')}" data-notif="${n.id}">
+          <div class="row row--between"><strong>${esc(n.title)}</strong><span class="faint small">${timeAgo(n.created_at)}</span></div>
+          ${n.body ? `<div class="muted small" style="margin-top:4px">${esc(n.body)}</div>` : ''}
+        </a>`).join('')}</div>` : '<div class="empty"><h3>Nothing yet</h3><p>When something happens with your bookings or messages it shows up here.</p></div>'}`;
+    const readAll = $('[data-read-all]');
+    if (readAll) readAll.addEventListener('click', async () => { await api.post('/api/notifications/read', { all: true }); state.notifUnread = 0; renderNav(); viewNotifications(); });
+    $$('[data-notif]').forEach((a) => a.addEventListener('click', () => {
+      if (a.classList.contains('notif--unread')) api.post('/api/notifications/read', { id: Number(a.dataset.notif) }).then((x) => { state.notifUnread = x.unread; renderNav(); }).catch(() => {});
+    }));
+  }
+
+  async function renderPushCard(box) {
+    const u = state.user;
+    let status = 'unsupported';
+    let sub = null;
+    if (isNative()) status = 'native';
+    else if (pushSupported()) {
+      sub = await currentPushSubscription().catch(() => null);
+      status = Notification.permission === 'denied' ? 'blocked' : (sub ? 'on' : 'off');
+    } else if (isIOS() && !isStandalone()) status = 'ios-install';
+    const lines = {
+      unsupported: 'This browser cannot receive push notifications. Email notifications still work.',
+      'ios-install': 'On iPhone and iPad, add Inkwell to your home screen first (Share → Add to Home Screen), then enable notifications here.',
+      blocked: 'Notifications are blocked for this site in your browser settings.',
+      off: 'Get alerts on this device for booking requests, payments, proposals and messages.',
+      on: 'This device receives push notifications.',
+      native: 'Notifications are delivered through the Inkwell app on this phone.',
+    };
+    box.innerHTML = `
+      <h3 id="notifications">Notifications on this device</h3>
+      <p class="muted small">${lines[status]}</p>
+      <div class="row">
+        ${status === 'off' ? '<button class="btn btn--sm" data-push-on>Enable push notifications</button>' : ''}
+        ${status === 'on' ? '<button class="btn btn--ghost btn--sm" data-push-off>Turn off on this device</button><button class="btn btn--subtle btn--sm" data-push-test>Send a test</button>' : ''}
+        ${status === 'native' ? '<button class="btn btn--sm" data-push-on>Allow notifications</button><button class="btn btn--subtle btn--sm" data-push-test>Send a test</button>' : ''}
+        ${status === 'ios-install' || (!isStandalone() && !isNative() && state.installPrompt) ? '<button class="btn btn--ghost btn--sm" data-install>Add to home screen</button>' : ''}
+      </div>
+      <label class="check small" style="margin-top:12px"><input type="checkbox" data-push-pref ${u.push_notifications !== false ? 'checked' : ''}> Send me push notifications about bookings, payments, proposals and messages</label>`;
+    const on = $('[data-push-on]', box); const off = $('[data-push-off]', box); const test = $('[data-push-test]', box); const install = $('[data-install]', box);
+    if (on) on.addEventListener('click', async () => { try { if (await enablePush()) { toast('Push notifications enabled'); renderPushCard(box); } } catch (err) { handleError(err); } });
+    if (off) off.addEventListener('click', async () => { try { await disablePush(); toast('Push turned off on this device'); renderPushCard(box); } catch (err) { handleError(err); } });
+    if (test) test.addEventListener('click', async () => { try { const r = await api.post('/api/push/test'); toast(r.sent ? 'Test notification sent' : 'No device could be reached', r.sent ? 'ok' : 'error'); } catch (err) { handleError(err); } });
+    if (install) install.addEventListener('click', promptInstall);
+    $('[data-push-pref]', box).addEventListener('change', async (e) => {
+      try { const r = await api.put('/api/auth/me', { push_notifications: e.target.checked }); state.user = r.user; toast(e.target.checked ? 'Push notifications on' : 'Push notifications off'); } catch (err) { handleError(err); }
     });
   }
 
@@ -1754,6 +1968,7 @@
     [/^\/terms$/, () => viewTerms()],
     [/^\/privacy$/, () => viewPrivacy()],
     [/^\/admin$/, (m, p) => viewAdmin(p)],
+    [/^\/notifications$/, () => viewNotifications()],
   ];
 
   function route() {
@@ -1780,6 +1995,8 @@
       if (pay) state.pay = pay;
     } catch { state.styles = []; }
     state.ready = true;
+    setupNativeBridge();
+    registerServiceWorker();
     route();
     refreshUnread();
     setInterval(refreshUnread, 30000);

@@ -63,6 +63,17 @@ straight from an artist's published hours.
   removes content and personal data, cancels active bookings with the usual refunds, and keeps
   anonymised payment records.
 
+**Mobile**
+- Installable Progressive Web App: home-screen install on Android, iOS and desktop, full-screen
+  standalone mode, an offline shell with cached images, an "update available" prompt, a bottom
+  tab bar and safe-area handling on phones.
+- Push notifications on the web app (VAPID) for bookings, payments, proposals and messages, with a
+  per-device opt-in in settings and a per-user preference. An in-app notification center with
+  unread badges backs every push.
+- Native iOS and Android apps via the Capacitor shell in `mobile/`: token authentication, CORS for
+  the app origin, Firebase Cloud Messaging for native push (one setup covers APNs too), deep-link
+  association files, and hardware back button support. See `mobile/README.md`.
+
 **Production hardening**
 - Uploads are decoded by sharp, re-encoded (metadata stripped, long edge capped at 1800px), and
   get a 480px thumbnail. Anything that is not really an image is rejected. SVG uploads are refused
@@ -147,6 +158,9 @@ Put a TLS-terminating reverse proxy in front (nginx, Caddy, or the platform rout
   `checkout.session.completed` pointing at `https://your.domain/api/payments/webhook/stripe`.
   Without a Stripe key the demo card processor runs and no money moves.
 - `INKWELL_ADMIN_EMAIL` set to an existing account, or run `npm run make-admin -- you@example.com`.
+- `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` set explicitly if you run more than one instance.
+- For the store apps: `FCM_SERVICE_ACCOUNT_JSON` for push, and the `ANDROID_*` / `IOS_*` deep-link
+  variables. Build steps are in `mobile/README.md`.
 - Back up `/data` (or `data/` and `uploads/`). `npm run backup` writes a consistent SQLite copy
   and keeps the last 14.
 - Replace the Terms and Privacy templates with text reviewed by a lawyer.
@@ -184,6 +198,12 @@ put uploads on object storage behind the same `/uploads` path and rate limit at 
 | `INKWELL_ADMIN_EMAIL` | unset              | Grants admin to this account at startup |
 | `INKWELL_IMAGE_MAX_EDGE` | `1800`          | Long-edge cap for processed uploads |
 | `LOG_FORMAT`          | text               | `json` for structured request logs  |
+| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | generated | Web push keys; generated and stored in the database if unset |
+| `VAPID_CONTACT`       | `mailto:hello@inkwell.local` | Contact for push services |
+| `FCM_SERVICE_ACCOUNT_JSON` | unset         | Firebase service account (JSON or path) for native push |
+| `CORS_ORIGINS`        | unset              | Extra origins allowed to call the API with credentials |
+| `ANDROID_PACKAGE` / `ANDROID_CERT_SHA256` | unset | Serve `/.well-known/assetlinks.json` |
+| `IOS_TEAM_ID` / `IOS_BUNDLE_ID` | unset    | Serve `/.well-known/apple-app-site-association` |
 
 ## API overview
 
@@ -204,7 +224,12 @@ All endpoints live under `/api` and return JSON. Authentication is a session coo
 | Admin        | `GET /admin/overview`, `GET /admin/reports`, `POST /admin/reports/:id/resolve`, `GET /admin/users`, `POST /admin/users/:id/suspend|unsuspend|admin`, `DELETE /admin/content/:type/:id` |
 | Account      | `GET /auth/me/export`, `DELETE /auth/me`, `POST /auth/logout-all` |
 | Webhooks     | `POST /payments/webhook/stripe` |
-| Ops          | `GET /health`, plus `/robots.txt` and `/sitemap.xml` at the root |
+| Push         | `GET /push/config`, `GET /push/subscriptions`, `POST`/`DELETE /push/subscribe`, `POST /push/test` |
+| Notifications| `GET /notifications`, `GET /notifications/unread`, `POST /notifications/read` |
+| Ops          | `GET /health`, plus `/robots.txt`, `/sitemap.xml`, `/sw.js`, `/manifest.json` and `/.well-known/*` at the root |
+
+Native clients send `X-Inkwell-Client: native` on login or register and receive a `token` to use
+as `Authorization: Bearer <token>` instead of the session cookie.
 
 ## Project layout
 
@@ -219,15 +244,19 @@ inkwell/
     ledger.js       Deposit/balance payments and the refund policy
     mailer.js       Email delivery and templates
     images.js       Upload validation, re-encoding and thumbnails (sharp)
-    security.js     Security headers, rate limiting, origin check, request log
+    security.js     Security headers, rate limiting, CORS, origin check, request log
+    push.js         Web push (VAPID), Firebase Cloud Messaging, notification center
     seed.js         Demo data and SVG artwork generator
-    routes/         auth, artists, galleries, requests, bookings, payments, messages, reviews, reports, admin
+    routes/         auth, artists, galleries, requests, bookings, payments, messages, reviews, reports, admin, push
   scripts/          backup.js, make-admin.js
   Dockerfile, docker-compose.yml, .env.example
   public/
     index.html      App shell
     css/style.css   Styles
-    js/api.js       Fetch wrapper
+    js/api.js       Fetch wrapper (cookie or bearer token)
     js/app.js       Router and views
-  test/             End-to-end API tests (core flows, payments, reset, email, production hardening)
+    sw.js           Service worker: offline shell, image cache, push
+    manifest.json   Web app manifest
+  mobile/           Capacitor shell for the iOS and Android store apps
+  test/             End-to-end API tests (core flows, payments, reset, email, production hardening, mobile)
 ```
