@@ -63,6 +63,18 @@ straight from an artist's published hours.
   removes content and personal data, cancels active bookings with the usual refunds, and keeps
   anonymised payment records.
 
+**Artist analytics**
+- A dashboard at `/analytics` for artists: revenue collected, profile and artwork views, unique
+  visitors, booking requests and confirmation rate, new followers and rating, each compared with
+  the previous period. Charts for views over time, revenue and requests per period, the booking
+  funnel, busiest weekdays and hours, top artworks, the ratings breakdown, first-time versus
+  returning clients, and open client requests in the artist's styles. Ranges of 7, 30, 90 days
+  or 12 months; every chart has a table view; bookings export as CSV for accounting.
+- View tracking is privacy-preserving: signed-in viewers are keyed by id, anonymous viewers by a
+  hash of address, browser and a salt that rotates daily, so nobody is followed across days and
+  no raw address is stored. Bots and an artist's own views are ignored; events expire after
+  400 days (`INKWELL_ANALYTICS_RETENTION_DAYS`).
+
 **Mobile**
 - Installable Progressive Web App: home-screen install on Android, iOS and desktop, full-screen
   standalone mode, an offline shell with cached images, an "update available" prompt, a bottom
@@ -198,6 +210,7 @@ put uploads on object storage behind the same `/uploads` path and rate limit at 
 | `INKWELL_ADMIN_EMAIL` | unset              | Grants admin to this account at startup |
 | `INKWELL_IMAGE_MAX_EDGE` | `1800`          | Long-edge cap for processed uploads |
 | `LOG_FORMAT`          | text               | `json` for structured request logs  |
+| `INKWELL_ANALYTICS_RETENTION_DAYS` | `400` | How long view events are kept       |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | generated | Web push keys; generated and stored in the database if unset |
 | `VAPID_CONTACT`       | `mailto:hello@inkwell.local` | Contact for push services |
 | `FCM_SERVICE_ACCOUNT_JSON` | unset         | Firebase service account (JSON or path) for native push |
@@ -226,6 +239,7 @@ All endpoints live under `/api` and return JSON. Authentication is a session coo
 | Webhooks     | `POST /payments/webhook/stripe` |
 | Push         | `GET /push/config`, `GET /push/subscriptions`, `POST`/`DELETE /push/subscribe`, `POST /push/test` |
 | Notifications| `GET /notifications`, `GET /notifications/unread`, `POST /notifications/read` |
+| Analytics    | `GET /artists/me/analytics?range=7d|30d|90d|12m`, `GET /artists/me/analytics/export.csv?range=` |
 | Ops          | `GET /health`, plus `/robots.txt`, `/sitemap.xml`, `/sw.js`, `/manifest.json` and `/.well-known/*` at the root |
 
 Native clients send `X-Inkwell-Client: native` on login or register and receive a `token` to use
@@ -246,17 +260,19 @@ inkwell/
     images.js       Upload validation, re-encoding and thumbnails (sharp)
     security.js     Security headers, rate limiting, CORS, origin check, request log
     push.js         Web push (VAPID), Firebase Cloud Messaging, notification center
+    analytics.js    View tracking and the artist analytics report
     seed.js         Demo data and SVG artwork generator
-    routes/         auth, artists, galleries, requests, bookings, payments, messages, reviews, reports, admin, push
+    routes/         auth, artists, galleries, requests, bookings, payments, messages, reviews, reports, admin, push, analytics
   scripts/          backup.js, make-admin.js
   Dockerfile, docker-compose.yml, .env.example
   public/
     index.html      App shell
     css/style.css   Styles
     js/api.js       Fetch wrapper (cookie or bearer token)
+    js/charts.js    Dependency-free SVG charts with tooltips and table twins
     js/app.js       Router and views
     sw.js           Service worker: offline shell, image cache, push
     manifest.json   Web app manifest
   mobile/           Capacitor shell for the iOS and Android store apps
-  test/             End-to-end API tests (core flows, payments, reset, email, production hardening, mobile)
+  test/             End-to-end API tests (core flows, payments, reset, email, production hardening, mobile, analytics)
 ```

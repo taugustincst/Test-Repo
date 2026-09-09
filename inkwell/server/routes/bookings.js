@@ -5,6 +5,7 @@ const { db } = require('../db');
 const { requireAuth, requireRole } = require('../auth');
 const ledger = require('../ledger');
 const mailer = require('../mailer');
+const analytics = require('../analytics');
 
 const router = express.Router();
 
@@ -102,6 +103,7 @@ function slotsFor(artist, date) {
 router.get('/artists/:id/availability', (req, res) => {
   const artist = artistProfile.get(req.params.id);
   if (!artist) return res.status(404).json({ error: 'Artist not found.' });
+  analytics.track(req, 'booking_page_view', artist.id);
   res.json({
     availability: availabilityFor.all(artist.id),
     session_minutes: artist.session_minutes,

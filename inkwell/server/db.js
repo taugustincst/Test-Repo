@@ -241,6 +241,15 @@ CREATE TABLE IF NOT EXISTS notifications (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS analytics_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  artist_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  target_id INTEGER,
+  visitor_key TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS app_settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -269,6 +278,10 @@ CREATE INDEX IF NOT EXISTS idx_reviews_artist ON reviews(artist_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_push_user ON push_subscriptions(user_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, read_at, created_at);
+CREATE INDEX IF NOT EXISTS idx_analytics_artist ON analytics_events(artist_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_analytics_target ON analytics_events(kind, target_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_follows_artist_time ON follows(artist_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_payments_payee_time ON payments(payee_id, paid_at);
 `;
 
 db.exec(SCHEMA);

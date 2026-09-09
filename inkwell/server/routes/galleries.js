@@ -5,6 +5,7 @@ const { db, STYLES } = require('../db');
 const { requireAuth, requireRole } = require('../auth');
 const { upload, removeByUrl } = require('../upload');
 const { processArtwork } = require('../images');
+const analytics = require('../analytics');
 
 const router = express.Router();
 
@@ -98,6 +99,7 @@ router.get('/galleries/:id', (req, res) => {
   const gallery = getGallery.get(req.params.id);
   if (!gallery) return res.status(404).json({ error: 'Gallery not found.' });
   gallery.artworks = artworksForGallery.all(gallery.id).map((a) => decorate(a, req.user));
+  analytics.track(req, 'gallery_view', gallery.artist_id, gallery.id);
   res.json({ gallery });
 });
 
@@ -154,6 +156,7 @@ router.get('/artworks/:id', (req, res) => {
   if (!artwork) return res.status(404).json({ error: 'Artwork not found.' });
   decorate(artwork, req.user);
   artwork.comments = commentsFor.all(artwork.id);
+  analytics.track(req, 'artwork_view', artwork.artist_id, artwork.id);
   res.json({ artwork });
 });
 

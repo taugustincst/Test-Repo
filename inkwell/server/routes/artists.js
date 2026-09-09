@@ -3,6 +3,7 @@
 const express = require('express');
 const { db, STYLES } = require('../db');
 const { requireAuth, safeParse } = require('../auth');
+const analytics = require('../analytics');
 
 const router = express.Router();
 
@@ -84,6 +85,7 @@ router.get('/:id', (req, res) => {
   if (!artist) return res.status(404).json({ error: 'Artist not found.' });
   artist.galleries = galleriesForArtist.all(artist.id);
   artist.is_following = req.user ? !!isFollowing.get(req.user.id, artist.id) : false;
+  analytics.track(req, 'profile_view', artist.id);
   res.json({ artist });
 });
 
