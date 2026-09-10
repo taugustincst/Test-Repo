@@ -15,7 +15,7 @@ straight from an artist's published hours.
 - Clients post tattoo requests: idea, style, placement, size, budget, reference image.
 - Artists browse open requests and send proposals with a quote and estimated hours.
 - Clients see every proposal, accept one (the rest auto-decline), and can book the artist directly.
-- Direct messaging between any artist and client, with unread counts.
+- Direct messaging between any artist and client, with unread counts (see Messaging inbox).
 
 **Booking**
 - Artists publish weekly hours and a session length. Free slots are computed automatically.
@@ -74,6 +74,24 @@ straight from an artist's published hours.
   hash of address, browser and a salt that rotates daily, so nobody is followed across days and
   no raw address is stored. Bots and an artist's own views are ignored; events expire after
   400 days (`INKWELL_ANALYTICS_RETENTION_DAYS`).
+
+**Messaging inbox**
+- One inbox at `/messages` for artists and clients: search across people and message text, filters
+  for unread, starred and archived conversations, and a details pane beside each thread with the
+  booking history between the two people (next session, sessions done, amount paid, open requests,
+  the review) so an artist never has to leave the conversation to check.
+- Threads update live over server-sent events (polling fallback for the native shell): new
+  messages, "Seen" read receipts and unsends appear without a refresh. Messages group by day, load
+  in pages of 50, and keep an unsent draft per conversation.
+- Photos can be attached (same validation and re-encoding as artwork uploads) and artists can
+  share a tattoo from their galleries as a card that links to the piece.
+- Saved replies for answers artists type often, with `{first_name}`, `{name}`, `{studio}` and
+  `{deposit}` filled in on insert.
+- Per-conversation star, mute (no email or push for that person), archive (a new message brings it
+  back), mark as unread, and "Mark all read". Blocking stops messages in both directions; the report
+  flow is one click away. Messages can be unsent for 15 minutes; attachments are removed with them.
+- Artist profiles show "Usually replies within an hour / a few hours / a day", the median time to
+  answer a client over the last 90 days.
 
 **Mobile**
 - Installable Progressive Web App: home-screen install on Android, iOS and desktop, full-screen
@@ -231,7 +249,7 @@ All endpoints live under `/api` and return JSON. Authentication is a session coo
 | Requests     | `GET`/`POST /requests`, `GET`/`DELETE /requests/:id`, `PUT /requests/:id/status`, `POST /requests/:id/proposals`, `POST /requests/proposals/:id/accept|decline` |
 | Booking      | `GET /artists/:id/availability`, `PUT /artists/me/availability`, `GET /artists/:id/slots?date=`, `GET`/`POST /appointments`, `GET /appointments/:id`, `POST /appointments/:id/confirm|decline|complete|cancel` (`complete` accepts `price`) |
 | Payments     | `GET /payments/config`, `GET /payments`, `POST /payments/:id/pay` (demo card), `POST /payments/:id/checkout` and `POST /payments/:id/confirm` (Stripe) |
-| Messages     | `GET /messages`, `GET /messages/unread`, `GET`/`POST /messages/:userId` |
+| Messages     | `GET /messages?filter=all|unread|starred|archived&q=`, `GET /messages/unread`, `POST /messages/read-all`, `GET /messages/stream` (SSE), `GET /messages/:userId?before=`, `POST /messages/:userId` (JSON or multipart with `image`, `artwork_id`), `PATCH /messages/:userId` (`starred`, `muted`, `archived`), `POST /messages/:userId/read|unread`, `DELETE /messages/:userId/messages/:id`, `POST`/`DELETE /messages/:userId/block`, `GET`/`POST /messages/saved-replies`, `PUT`/`DELETE /messages/saved-replies/:id` |
 | Reviews      | `GET /artists/:id/reviews`, `POST /appointments/:id/review`, `POST /reviews/:id/reply`, `DELETE /reviews/:id` |
 | Reports      | `POST /reports`, `GET /reports/reasons` |
 | Admin        | `GET /admin/overview`, `GET /admin/reports`, `POST /admin/reports/:id/resolve`, `GET /admin/users`, `POST /admin/users/:id/suspend|unsuspend|admin`, `DELETE /admin/content/:type/:id` |
@@ -261,6 +279,7 @@ inkwell/
     security.js     Security headers, rate limiting, CORS, origin check, request log
     push.js         Web push (VAPID), Firebase Cloud Messaging, notification center
     analytics.js    View tracking and the artist analytics report
+    messaging.js    Live message events (SSE), reply-time stat, booking context for threads
     seed.js         Demo data and SVG artwork generator
     routes/         auth, artists, galleries, requests, bookings, payments, messages, reviews, reports, admin, push, analytics
   scripts/          backup.js, make-admin.js

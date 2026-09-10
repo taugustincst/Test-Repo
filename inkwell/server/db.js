@@ -264,6 +264,31 @@ CREATE TABLE IF NOT EXISTS messages (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS conversation_state (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  other_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  starred INTEGER NOT NULL DEFAULT 0,
+  muted INTEGER NOT NULL DEFAULT 0,
+  archived_at TEXT,
+  notified_id INTEGER,
+  PRIMARY KEY (user_id, other_id)
+);
+
+CREATE TABLE IF NOT EXISTS saved_replies (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS blocks (
+  blocker_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  blocked_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (blocker_id, blocked_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_artworks_artist ON artworks(artist_id);
 CREATE INDEX IF NOT EXISTS idx_artworks_gallery ON artworks(gallery_id);
 CREATE INDEX IF NOT EXISTS idx_comments_artwork ON comments(artwork_id);
@@ -282,6 +307,8 @@ CREATE INDEX IF NOT EXISTS idx_analytics_artist ON analytics_events(artist_id, c
 CREATE INDEX IF NOT EXISTS idx_analytics_target ON analytics_events(kind, target_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_follows_artist_time ON follows(artist_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_payments_payee_time ON payments(payee_id, paid_at);
+CREATE INDEX IF NOT EXISTS idx_messages_recipient ON messages(recipient_id, read_at);
+CREATE INDEX IF NOT EXISTS idx_saved_replies_user ON saved_replies(user_id, created_at);
 `;
 
 db.exec(SCHEMA);
@@ -303,6 +330,8 @@ ensureColumn('artworks', 'thumb_url', 'TEXT');
 ensureColumn('artworks', 'width', 'INTEGER');
 ensureColumn('artworks', 'height', 'INTEGER');
 ensureColumn('users', 'push_notifications', 'INTEGER NOT NULL DEFAULT 1');
+ensureColumn('messages', 'attachments', 'TEXT');
+ensureColumn('messages', 'deleted_at', 'TEXT');
 // Indexes on migrated columns must come after the columns exist.
 db.exec('CREATE INDEX IF NOT EXISTS idx_users_suspended ON users(suspended_at)');
 

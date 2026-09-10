@@ -319,7 +319,8 @@ test('direct messages and unread counts', async () => {
 
   r = await a.post(`/api/messages/${bId}`, { body: 'Hey Ben, saw your request.' });
   assert.equal(r.status, 201);
-  assert.equal(r.data.messages.length, 1);
+  assert.equal(r.data.message.body, 'Hey Ben, saw your request.');
+  assert.equal(r.data.message.sender_id, aId);
 
   r = await b.get('/api/messages/unread');
   assert.equal(r.data.unread, baseline + 1);
@@ -333,6 +334,8 @@ test('direct messages and unread counts', async () => {
   assert.equal(r.data.unread, baseline, 'opening the thread marks it read');
 
   r = await b.post(`/api/messages/${aId}`, { body: 'Hi! Yes, still looking.' });
+  assert.equal(r.status, 201);
+  r = await a.get(`/api/messages/${bId}`);
   assert.equal(r.data.messages.length, 2);
   r = await a.get('/api/messages');
   assert.equal(r.data.conversations.find((c) => c.user_id === bId).last_body, 'Hi! Yes, still looking.');
