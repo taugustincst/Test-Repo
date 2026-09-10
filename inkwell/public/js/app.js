@@ -630,6 +630,7 @@
             ${artist.hourly_rate ? `<span><strong>${money(artist.hourly_rate)}</strong>/hour</span>` : ''}
             ${artist.min_price ? `<span><strong>${money(artist.min_price)}</strong> minimum</span>` : ''}
             <span>${artist.accepting_clients ? '<span style="color:var(--green)">● Taking new clients</span>' : '<span class="faint">● Books closed</span>'}</span>
+            ${artist.replies_within ? `<span>${esc(artist.replies_within)}</span>` : ''}
           </div>
           ${artist.bio ? `<p style="max-width:70ch">${esc(artist.bio)}</p>` : ''}
           <div class="row small muted">
@@ -1249,69 +1250,458 @@
 
   /* ---------- messages ---------- */
 
-  async function viewMessages(otherId) {
+  const MSG_FILTERS = [['all', 'All'], ['unread', 'Unread'], ['starred', 'Starred'], ['archived', 'Archived']];
+  const UNSEND_MS = 15 * 60000;
+  const draftKey = (id) => `inkwell_draft_${id}`;
+  const readDraft = (id) => { try { return localStorage.getItem(draftKey(id)) || ''; } catch { return ''; } };
+  const writeDraft = (id, text) => { try { if (text) localStorage.setItem(draftKey(id), text); else localStorage.removeItem(draftKey(id)); } catch { /* storage unavailable */ } };
+
+  const MSG_ICONS = {
+    star: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3.5l2.7 5.6 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1L3.2 10l6.1-.9z"/></svg>',
+    starFilled: '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 3.5l2.7 5.6 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1L3.2 10l6.1-.9z"/></svg>',
+    photo: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5-8 8"/></svg>',
+    art: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3a9 9 0 1 0 0 18c1.5 0 2-1 2-2 0-1.2-1-1.5-1-2.5 0-1 .8-1.5 2-1.5h1.5A4.5 4.5 0 0 0 21 10.5C21 6.4 17 3 12 3z"/><circle cx="7.5" cy="11" r="1.2"/><circle cx="10.5" cy="7" r="1.2"/><circle cx="15" cy="7" r="1.2"/></svg>',
+    reply: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5h16v10H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg>',
+    send: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 12l16-8-5 16-3-6z"/></svg>',
+    mute: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 8a6 6 0 0 1 12 0v5l2 3H4l2-3z"/><path d="M4 4l16 16"/></svg>',
+    info: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8v.5"/></svg>',
+  };
+
+  function dayLabel(ts) {
+    const d = parseDb(ts);
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const day = new Date(d); day.setHours(0, 0, 0, 0);
+    const diff = Math.round((today - day) / 86400000);
+    if (diff === 0) return 'Today';
+    if (diff === 1) return 'Yesterday';
+    if (diff < 7) return d.toLocaleDateString(undefined, { weekday: 'long' });
+    return d.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: d.getFullYear() === today.getFullYear() ? undefined : 'numeric' });
+  }
+
+  function clockTime(ts) {
+    const d = parseDb(ts);
+    return d ? d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : '';
+  }
+
+  function attachmentHtml(a) {
+    if (a.type === 'image') return `<a class="bubble__photo" href="${attr(a.url)}" data-photo="${attr(a.url)}"><img src="${attr(a.thumb_url || a.url)}" alt="Photo" loading="lazy" ${a.width && a.height ? `style="aspect-ratio:${a.width}/${a.height}"` : ''}></a>`;
+    if (a.type === 'artwork') return `<a class="bubble__art" href="/artworks/${a.id}"><img src="${attr(a.thumb_url)}" alt="" loading="lazy"><span><strong>${esc(a.title || 'Tattoo')}</strong><small>${esc(a.style || '')}</small></span></a>`;
+    return '';
+  }
+
+  function bubbleHtml(m, me, seenId) {
+    const mine = m.sender_id === me.id;
+    const canUnsend = mine && !m.deleted && Date.now() - parseDb(m.created_at).getTime() < UNSEND_MS;
+    const body = m.deleted ? '<em class="bubble__deleted">Message removed</em>' : `${(m.attachments || []).map(attachmentHtml).join('')}${m.body ? `<p>${esc(m.body).replace(/\n/g, '<br>')}</p>` : ''}`;
+    return `<div class="bubble ${mine ? 'bubble--mine' : ''} ${m.deleted ? 'bubble--deleted' : ''}" data-id="${m.id}">
+      ${body}
+      <div class="bubble__meta"><time datetime="${attr(m.created_at)}">${clockTime(m.created_at)}</time>${canUnsend ? '<button type="button" class="bubble__unsend" data-unsend>Unsend</button>' : ''}</div>
+      ${seenId === m.id ? `<span class="bubble__seen">${m.read_at ? 'Seen' : 'Delivered'}</span>` : ''}
+    </div>`;
+  }
+
+  function messagesHtml(messages, me) {
+    if (!messages.length) return '<p class="faint thread__empty">Say hello. Photos of the placement or reference ideas help a lot.</p>';
+    const last = messages[messages.length - 1];
+    const seenId = last.sender_id === me.id && !last.deleted ? last.id : null;
+    let out = '';
+    let lastDay = '';
+    messages.forEach((m) => {
+      const day = dayLabel(m.created_at);
+      if (day !== lastDay) { out += `<div class="thread__day"><span>${esc(day)}</span></div>`; lastDay = day; }
+      out += bubbleHtml(m, me, seenId);
+    });
+    return out;
+  }
+
+  function contextHtml(ctx, other, me) {
+    if (!ctx) return '';
+    const isArtist = me.role === 'artist';
+    const next = ctx.next_appointment;
+    const rows = [];
+    if (next) rows.push(`<a class="ctx__item" href="/appointments"><span class="ctx__label">Next session</span><strong>${esc(fmtSlot(next.starts_at))}</strong><span class="small muted">${pill(next.status)}${next.deposit_amount ? ` · ${money(next.deposit_amount)} deposit` : ''}</span></a>`);
+    else rows.push(`<div class="ctx__item"><span class="ctx__label">Next session</span><span class="muted">Nothing booked</span>${isArtist ? '' : `<a class="btn btn--sm" style="margin-top:8px" href="/book/${other.id}">Book a session</a>`}</div>`);
+    rows.push(`<div class="ctx__stats"><div><strong>${ctx.completed_count}</strong><span>done</span></div><div><strong>${ctx.upcoming_count}</strong><span>upcoming</span></div><div><strong>${ctx.cancelled_count}</strong><span>cancelled</span></div><div><strong>${money(ctx.total_paid)}</strong><span>${isArtist ? 'paid you' : 'paid'}</span></div></div>`);
+    if (ctx.open_requests.length) rows.push(`<div class="ctx__item"><span class="ctx__label">Open request${ctx.open_requests.length > 1 ? 's' : ''}</span>${ctx.open_requests.map((r) => `<a class="ctx__link" href="/requests/${r.id}"><strong>${esc(r.title)}</strong><span class="small muted">${esc(r.style || '')}${r.budget_min || r.budget_max ? ` · ${money(r.budget_min || 0)}–${money(r.budget_max || 0)}` : ''}${r.my_proposal ? ` · you proposed (${esc(r.my_proposal)})` : ''}</span></a>`).join('')}</div>`);
+    if (ctx.recent.length) rows.push(`<div class="ctx__item"><span class="ctx__label">History</span>${ctx.recent.map((a) => `<div class="ctx__row"><span>${esc(fmtSlot(a.starts_at).split(',').slice(0, 2).join(','))}</span>${pill(a.status)}</div>`).join('')}</div>`);
+    if (ctx.review) rows.push(`<div class="ctx__item"><span class="ctx__label">${isArtist ? 'Their review' : 'Your review'}</span><span>${'★'.repeat(ctx.review.rating)}<span class="faint">${'★'.repeat(5 - ctx.review.rating)}</span></span>${ctx.review.body ? `<span class="small muted">${esc(ctx.review.body.slice(0, 140))}</span>` : ''}</div>`);
+    if (ctx.since) rows.push(`<div class="small faint">In touch since ${esc(parseDb(ctx.since).toLocaleDateString(undefined, { month: 'short', year: 'numeric' }))}</div>`);
+    return `<div class="ctx"><div class="ctx__head"><h3>${isArtist ? 'About this client' : 'Your bookings'}</h3><button type="button" class="modal__close" data-close-context aria-label="Close details">×</button></div>${rows.join('')}</div>`;
+  }
+
+  function convoHtml(c, activeId, me) {
+    const preview = `${c.last_sender_id === me.id ? 'You: ' : ''}${c.last_body}`;
+    return `<a class="convo ${String(c.user_id) === String(activeId) ? 'active' : ''} ${c.unread ? 'convo--unread' : ''}" href="/messages/${c.user_id}${location.search}">
+      ${avatar(c.avatar_url, c.name, 'avatar--sm')}
+      <div class="convo__body">
+        <div class="convo__name"><span>${esc(c.name)}${c.starred ? `<i class="convo__star">${MSG_ICONS.starFilled}</i>` : ''}${c.muted ? `<i class="convo__mute">${MSG_ICONS.mute}</i>` : ''}</span><span class="faint small">${timeAgo(c.last_at)}</span></div>
+        <div class="convo__preview">${esc(preview)}</div>
+      </div>
+      ${c.unread ? `<span class="convo__unread">${c.unread}</span>` : ''}
+    </a>`;
+  }
+
+  function expandReply(text, other, me) {
+    const profile = me.profile || {};
+    return text
+      .replace(/\{first_name\}/g, (other.name || '').split(' ')[0])
+      .replace(/\{name\}/g, other.name || '')
+      .replace(/\{studio\}/g, profile.studio_name || me.name)
+      .replace(/\{deposit\}/g, money(profile.deposit_amount || 0));
+  }
+
+  function openSavedReplies({ onInsert, other } = {}) {
+    const me = state.user;
+    let replies = [];
+    const modal = openModal('<div class="modal__panel"><div class="modal__head"><div><h3>Saved replies</h3><p class="small muted">Answers you send often. Use {first_name}, {name}, {studio} and {deposit} and they are filled in.</p></div><button class="modal__close" data-close-modal aria-label="Close">×</button></div><div class="modal__body" data-replies><div class="loading">Loading</div></div></div>', { small: true });
+    const box = modal.querySelector('[data-replies]');
+    const editorHtml = (r = {}) => `<form class="reply-editor" data-editor data-id="${r.id || ''}">
+        <input name="title" placeholder="Title, e.g. Deposit policy" value="${attr(r.title || '')}" required maxlength="60">
+        <textarea name="body" placeholder="Reply text" required>${esc(r.body || '')}</textarea>
+        <div class="row"><button class="btn btn--sm">${r.id ? 'Save' : 'Add reply'}</button><button type="button" class="btn btn--ghost btn--sm" data-cancel-edit>Cancel</button></div>
+      </form>`;
+    function render(editing = null) {
+      box.innerHTML = `${replies.length ? `<div class="reply-list">${replies.map((r) => editing === r.id ? editorHtml(r) : `
+        <div class="reply-item">
+          <div class="reply-item__text">${onInsert ? `<button type="button" class="reply-item__insert" data-insert="${r.id}"><strong>${esc(r.title)}</strong><span>${esc(r.body.length > 140 ? `${r.body.slice(0, 140)}…` : r.body)}</span></button>` : `<strong>${esc(r.title)}</strong><span class="small muted">${esc(r.body)}</span>`}</div>
+          <div class="reply-item__actions"><button type="button" class="link small" data-edit="${r.id}">Edit</button><button type="button" class="link small" data-delete="${r.id}">Delete</button></div>
+        </div>`).join('')}</div>` : (editing === 'new' ? '' : '<p class="muted">No saved replies yet. Add the answers you type most: booking steps, deposit policy, aftercare.</p>')}
+        ${editing === 'new' ? editorHtml() : '<button type="button" class="btn btn--ghost btn--sm" data-new style="margin-top:12px">New saved reply</button>'}`;
+      const editor = box.querySelector('[data-editor]');
+      if (editor) {
+        editor.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const id = editor.dataset.id;
+          try {
+            const r = id ? await api.put(`/api/messages/saved-replies/${id}`, formData(editor)) : await api.post('/api/messages/saved-replies', formData(editor));
+            replies = r.replies; render();
+          } catch (err) { handleError(err); }
+        });
+        editor.querySelector('[data-cancel-edit]').addEventListener('click', () => render());
+        editor.querySelector('input').focus();
+      }
+      box.querySelectorAll('[data-edit]').forEach((b) => b.addEventListener('click', () => render(Number(b.dataset.edit))));
+      box.querySelectorAll('[data-delete]').forEach((b) => b.addEventListener('click', async () => {
+        try { ({ replies } = await api.del(`/api/messages/saved-replies/${b.dataset.delete}`)); render(); } catch (err) { handleError(err); }
+      }));
+      box.querySelectorAll('[data-insert]').forEach((b) => b.addEventListener('click', () => {
+        const r = replies.find((x) => String(x.id) === b.dataset.insert);
+        if (r && onInsert) onInsert(expandReply(r.body, other || {}, me));
+        closeModal();
+      }));
+      const add = box.querySelector('[data-new]');
+      if (add) add.addEventListener('click', () => render('new'));
+    }
+    api.get('/api/messages/saved-replies').then((r) => { replies = r.replies; render(); }).catch((err) => handleError(err));
+  }
+
+  function openPhoto(url) {
+    openModal(`<div class="modal__photo"><img src="${attr(url)}" alt="Photo"><button class="modal__close" data-close-modal aria-label="Close">×</button></div>`, { small: true });
+    modalRoot.querySelector('.modal').classList.add('modal--photo');
+  }
+
+  function openArtworkPicker(onPick) {
+    const me = state.user;
+    const modal = openModal('<div class="modal__panel"><div class="modal__head"><h3>Share a tattoo</h3><button class="modal__close" data-close-modal aria-label="Close">×</button></div><div class="modal__body" data-grid><div class="loading">Loading</div></div></div>', { small: true });
+    const grid = modal.querySelector('[data-grid]');
+    api.get('/api/feed', { artist_id: me.id, limit: 60 }).then((r) => {
+      const items = r.artworks || r.items || [];
+      grid.innerHTML = items.length ? `<div class="pick-grid">${items.map((a) => `<button type="button" class="pick" data-pick="${a.id}" title="${attr(a.title)}"><img src="${attr(a.thumb_url || a.image_url)}" alt="${attr(a.title)}" loading="lazy"><span>${esc(a.title)}</span></button>`).join('')}</div>` : '<p class="muted">Upload some work to a gallery first.</p>';
+      grid.querySelectorAll('[data-pick]').forEach((b) => b.addEventListener('click', () => { const a = items.find((x) => String(x.id) === b.dataset.pick); closeModal(); onPick(a); }));
+    }).catch((err) => handleError(err));
+  }
+
+  async function viewMessages(otherId, params) {
     if (!requireLogin(otherId ? `/messages/${otherId}` : '/messages')) return;
     loading();
-    let convos;
-    try { ({ conversations: convos } = await api.get('/api/messages')); } catch (e) { return handleError(e); }
     const me = state.user;
+    const filter = MSG_FILTERS.some(([k]) => k === params.get('filter')) ? params.get('filter') : 'all';
+    const q = params.get('q') || '';
+    let inbox;
+    try { inbox = await api.get('/api/messages', { filter, q }); } catch (e) { return handleError(e); }
+
     main.innerHTML = `
-      <div class="page-head"><div><h1>Messages</h1></div></div>
-      <div class="messages">
-        <div class="messages__list ${otherId ? 'hide-mobile' : ''}" data-list>
-          ${convos.length ? convos.map((c) => `
-            <a class="convo ${String(c.user_id) === String(otherId) ? 'active' : ''}" href="/messages/${c.user_id}">
-              ${avatar(c.avatar_url, c.name, 'avatar--sm')}
-              <div class="convo__body">
-                <div class="convo__name"><span>${esc(c.name)}</span><span class="faint small">${timeAgo(c.last_at)}</span></div>
-                <div class="convo__preview">${c.last_sender_id === me.id ? 'You: ' : ''}${esc(c.last_body)}</div>
-              </div>
-              ${c.unread ? `<span class="convo__unread">${c.unread}</span>` : ''}
-            </a>`).join('') : '<div class="empty" style="border:0"><p>No conversations yet. Message an artist from their profile.</p></div>'}
+      <div class="inbox-page ${otherId ? 'inbox-page--thread' : ''}">
+      <div class="page-head">
+        <div><h1>Messages</h1><p class="muted">${me.role === 'artist' ? 'Clients, requests and bookings in one inbox.' : 'Your conversations with artists.'}</p></div>
+        <div class="row">
+          ${me.role === 'artist' ? `<button class="btn btn--ghost btn--sm" data-saved-replies>${MSG_ICONS.reply} Saved replies</button>` : ''}
+          <button class="btn btn--ghost btn--sm" data-read-all ${inbox.counts.unread ? '' : 'disabled'}>Mark all read</button>
         </div>
-        <div class="messages__thread ${otherId ? '' : 'hide-mobile'}" data-thread>
-          ${otherId ? '<div class="loading">Loading</div>' : '<div class="empty" style="border:0;margin:auto"><h3>Pick a conversation</h3><p>Or start one from an artist or client profile.</p></div>'}
-        </div>
+      </div>
+      <div class="inbox ${otherId ? 'inbox--thread' : ''}" data-inbox>
+        <aside class="inbox__list" data-list>
+          <form class="inbox__search" data-search role="search"><input type="search" name="q" placeholder="Search people and messages" value="${attr(q)}" aria-label="Search messages"></form>
+          <div class="inbox__filters chips" data-filters></div>
+          <div class="inbox__convos" data-convos></div>
+        </aside>
+        <section class="inbox__thread" data-thread aria-live="polite">
+          ${otherId ? '<div class="loading">Loading</div>' : `<div class="empty inbox__blank"><h3>${inbox.conversations.length ? 'Pick a conversation' : 'No conversations yet'}</h3><p>${me.role === 'artist' ? 'Clients who message you or book a session show up here.' : 'Message an artist from their profile to get started.'}</p></div>`}
+        </section>
+        <aside class="inbox__context" data-context hidden></aside>
+      </div>
       </div>`;
-    if (!otherId) return;
+
+    const listEl = $('[data-convos]');
+    const filtersEl = $('[data-filters]');
     const threadEl = $('[data-thread]');
-    let lastCount = -1;
-    async function loadThread(scroll = true) {
-      let r;
-      try { r = await api.get(`/api/messages/${otherId}`); } catch (e) { threadEl.innerHTML = '<div class="empty" style="border:0;margin:auto"><h3>User not found</h3></div>'; return; }
-      if (r.messages.length === lastCount) return;
-      lastCount = r.messages.length;
-      const draft = threadEl.querySelector('input[name="body"]');
-      const draftValue = draft ? draft.value : '';
+    const contextEl = $('[data-context]');
+    const inboxEl = $('[data-inbox]');
+    const link = (f, query) => `/messages${otherId ? `/${otherId}` : ''}${(() => { const p = new URLSearchParams(); if (f !== 'all') p.set('filter', f); if (query) p.set('q', query); const s = p.toString(); return s ? `?${s}` : ''; })()}`;
+
+    function renderList() {
+      filtersEl.innerHTML = MSG_FILTERS.map(([k, label]) => `<a class="chip ${k === inbox.filter ? 'active' : ''}" href="${link(k, inbox.q)}">${label}${inbox.counts[k] && (k === 'unread' || k === 'archived') ? ` <b>${inbox.counts[k]}</b>` : ''}</a>`).join('');
+      listEl.innerHTML = inbox.conversations.length ? inbox.conversations.map((c) => convoHtml(c, otherId, me)).join('')
+        : `<div class="empty inbox__none"><p>${inbox.q ? 'Nothing matches that search.' : inbox.filter === 'unread' ? 'You are all caught up.' : inbox.filter === 'starred' ? 'Star conversations you want to find fast.' : inbox.filter === 'archived' ? 'Archived conversations land here.' : 'No conversations yet.'}</p></div>`;
+      const readAll = $('[data-read-all]');
+      if (readAll) readAll.disabled = !inbox.counts.unread;
+    }
+    async function refreshList() {
+      try { inbox = await api.get('/api/messages', { filter, q }); renderList(); } catch { /* keep what we have */ }
+    }
+    renderList();
+
+    $('[data-search]').addEventListener('submit', (e) => { e.preventDefault(); navigate(link(filter, e.target.q.value.trim())); });
+    $('[data-read-all]').addEventListener('click', async () => {
+      try { await api.post('/api/messages/read-all'); await refreshList(); refreshUnread(); toast('Everything marked as read'); } catch (err) { handleError(err); }
+    });
+    const savedBtn = $('[data-saved-replies]');
+    if (savedBtn) savedBtn.addEventListener('click', () => openSavedReplies());
+
+    /* live updates: server-sent events when the session is a cookie, polling otherwise */
+    let thread = null; // { other, messages, state, context, has_more }
+    const handlers = {
+      message: async (data) => {
+        if (thread && data.from === thread.other.id) {
+          thread.messages.push(data.message);
+          renderThreadBody(true);
+          try { await api.post(`/api/messages/${thread.other.id}/read`); } catch { /* ignore */ }
+        }
+        refreshList(); refreshUnread();
+      },
+      sent: (data) => { if (thread && data.to === thread.other.id && !thread.messages.some((m) => m.id === data.message.id)) { thread.messages.push(data.message); renderThreadBody(true); } refreshList(); },
+      read: (data) => { if (thread && data.by === thread.other.id) { thread.messages.forEach((m) => { if (m.sender_id === me.id && !m.read_at) m.read_at = data.at; }); renderThreadBody(false); } },
+      unsent: (data) => { if (thread && data.from === thread.other.id) { const i = thread.messages.findIndex((m) => m.id === data.message.id); if (i >= 0) thread.messages[i] = data.message; renderThreadBody(false); } refreshList(); },
+    };
+    let es = null;
+    let poll = null;
+    function startPolling() {
+      if (poll) return;
+      poll = setInterval(async () => {
+        if (thread) {
+          try {
+            const r = await api.get(`/api/messages/${thread.other.id}`);
+            const changed = r.messages.length !== thread.messages.length || (r.messages.length && (r.messages[r.messages.length - 1].id !== thread.messages[thread.messages.length - 1].id || (r.messages[r.messages.length - 1].read_at || '') !== (thread.messages[thread.messages.length - 1].read_at || '')));
+            if (changed) { thread.messages = r.messages; thread.has_more = r.has_more; renderThreadBody(true); }
+          } catch { /* ignore */ }
+        }
+        refreshList(); refreshUnread();
+      }, 8000);
+    }
+    if (window.EventSource && !isNative()) {
+      es = new EventSource('/api/messages/stream');
+      Object.keys(handlers).forEach((name) => es.addEventListener(name, (e) => { try { handlers[name](JSON.parse(e.data)); } catch { /* ignore */ } }));
+      es.onerror = () => { if (es.readyState === EventSource.CLOSED) { es = null; startPolling(); } };
+    } else startPolling();
+    onCleanup(() => { if (es) es.close(); if (poll) clearInterval(poll); });
+
+    if (!otherId) return;
+
+    /* ---- thread ---- */
+    let stickToBottom = true;
+    function bodyEl() { return $('[data-body]', threadEl); }
+
+    function renderThreadBody(scroll) {
+      const body = bodyEl();
+      if (!body) return;
+      const nearBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 80;
+      body.innerHTML = `${thread.has_more ? '<button type="button" class="btn btn--ghost btn--sm thread__more" data-more>Load earlier messages</button>' : ''}${messagesHtml(thread.messages, me)}`;
+      if (scroll || nearBottom || stickToBottom) body.scrollTop = body.scrollHeight;
+      stickToBottom = false;
+      const more = $('[data-more]', body);
+      if (more) more.addEventListener('click', async () => {
+        more.disabled = true;
+        try {
+          const r = await api.get(`/api/messages/${thread.other.id}`, { before: thread.messages[0].id });
+          const before = body.scrollHeight;
+          thread.messages = [...r.messages, ...thread.messages];
+          thread.has_more = r.has_more;
+          renderThreadBody(false);
+          body.scrollTop = body.scrollHeight - before;
+        } catch (err) { handleError(err); more.disabled = false; }
+      });
+      $$('[data-unsend]', body).forEach((b) => b.addEventListener('click', async () => {
+        const bubble = b.closest('.bubble');
+        try {
+          const r = await api.del(`/api/messages/${thread.other.id}/messages/${bubble.dataset.id}`);
+          const i = thread.messages.findIndex((m) => String(m.id) === bubble.dataset.id);
+          if (i >= 0) thread.messages[i] = r.message;
+          renderThreadBody(false); refreshList();
+        } catch (err) { handleError(err); }
+      }));
+      $$('[data-photo]', body).forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); openPhoto(a.dataset.photo); }));
+    }
+
+    function stateMenu() {
+      const s = thread.state;
+      const item = (action, label) => `<button type="button" class="menu__item" data-action="${action}">${label}</button>`;
+      return `<details class="menu" data-menu>
+        <summary class="btn btn--ghost btn--sm" aria-label="Conversation options">More</summary>
+        <div class="menu__list">
+          ${item('star', s.starred ? 'Unstar' : 'Star')}
+          ${item('mute', s.muted ? 'Unmute notifications' : 'Mute notifications')}
+          ${item('archive', s.archived ? 'Move to inbox' : 'Archive')}
+          ${item('unread', 'Mark as unread')}
+          <hr>
+          ${item('block', s.blocked ? 'Unblock' : 'Block')}
+          ${item('report', 'Report')}
+        </div>
+      </details>`;
+    }
+
+    function composeHtml() {
+      const s = thread.state;
+      if (s.blocked) return `<div class="thread__notice">You blocked ${esc(thread.other.name)}. <button type="button" class="link" data-action="block">Unblock</button> to message them again.</div>`;
+      if (s.blocked_by) return '<div class="thread__notice">You cannot message this person.</div>';
+      if (thread.other.suspended) return '<div class="thread__notice">This account is no longer active.</div>';
+      return `<form class="thread__compose" data-compose>
+        <div class="compose__pending" data-pending hidden></div>
+        <div class="compose__row">
+          <label class="compose__tool" title="Attach a photo"><input type="file" name="image" accept="image/jpeg,image/png,image/webp,image/gif" hidden data-file>${MSG_ICONS.photo}<span class="sr-only">Attach a photo</span></label>
+          ${me.role === 'artist' ? `<button type="button" class="compose__tool" title="Share a tattoo from your galleries" data-share-art>${MSG_ICONS.art}<span class="sr-only">Share a tattoo</span></button><button type="button" class="compose__tool" title="Insert a saved reply" data-insert-reply>${MSG_ICONS.reply}<span class="sr-only">Saved replies</span></button>` : ''}
+          <textarea name="body" rows="1" placeholder="Message" aria-label="Message">${esc(readDraft(thread.other.id))}</textarea>
+          <button class="btn compose__send" aria-label="Send">${MSG_ICONS.send}</button>
+        </div>
+        <div class="small faint compose__hint">Enter to send, Shift+Enter for a new line.</div>
+      </form>`;
+    }
+
+    function renderThread() {
+      const o = thread.other;
+      const s = thread.state;
       threadEl.innerHTML = `
         <div class="thread__head">
-          <a href="/messages" class="muted" style="display:none" data-back>←</a>
-          ${avatar(r.other.avatar_url, r.other.name, 'avatar--sm')}
-          <div>${r.other.role === 'artist' ? `<a href="/artists/${r.other.id}"><strong>${esc(r.other.name)}</strong></a>` : `<strong>${esc(r.other.name)}</strong>`}<div class="small muted">${r.other.role === 'artist' ? 'Artist' : 'Client'}${r.other.location ? ` · ${esc(r.other.location)}` : ''}</div></div>
-          <div style="margin-left:auto" class="row">${me.role === 'client' && r.other.role === 'artist' ? `<a class="btn btn--sm" href="/book/${r.other.id}">Book</a>` : ''}</div>
+          <a href="/messages${location.search}" class="thread__back" aria-label="Back to inbox">←</a>
+          ${avatar(o.avatar_url, o.name, 'avatar--sm')}
+          <div class="thread__who">
+            ${o.role === 'artist' ? `<a href="/artists/${o.id}"><strong>${esc(o.name)}</strong></a>` : `<strong>${esc(o.name)}</strong>`}${s.starred ? `<i class="convo__star">${MSG_ICONS.starFilled}</i>` : ''}
+            <div class="small muted">${o.role === 'artist' ? `${esc(o.studio_name || 'Artist')}${o.replies_within ? ` · ${esc(o.replies_within)}` : ''}` : `Client${o.location ? `<span class="thread__loc"> · ${esc(o.location)}</span>` : ''}`}</div>
+          </div>
+          <div class="thread__actions">
+            ${thread.context ? `<button type="button" class="btn btn--ghost btn--sm thread__details" data-toggle-context>${MSG_ICONS.info}<span>Details</span></button>` : ''}
+            ${me.role === 'client' && o.role === 'artist' ? `<a class="btn btn--sm" href="/book/${o.id}">Book</a>` : ''}
+            ${stateMenu()}
+          </div>
         </div>
-        <div class="thread__body" data-body>
-          ${r.messages.length ? r.messages.map((m) => `<div class="bubble ${m.sender_id === me.id ? 'bubble--mine' : ''}">${esc(m.body)}<time>${timeAgo(m.created_at)}</time></div>`).join('') : '<p class="faint" style="text-align:center;margin:auto">Say hello.</p>'}
-        </div>
-        <form class="thread__compose" data-compose>
-          <input name="body" placeholder="Write a message" autocomplete="off" required value="${attr(draftValue)}">
-          <button class="btn">Send</button>
-        </form>`;
-      const body = $('[data-body]', threadEl);
-      if (scroll) body.scrollTop = body.scrollHeight;
-      $('[data-compose]', threadEl).addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const input = e.target.body;
-        const text = input.value.trim();
-        if (!text) return;
-        input.value = '';
-        try { await api.post(`/api/messages/${otherId}`, { body: text }); lastCount = -1; await loadThread(); refreshUnread(); } catch (err) { handleError(err); }
-      });
-      refreshUnread();
+        ${s.muted ? '<div class="thread__notice thread__notice--soft">Notifications are muted for this conversation.</div>' : ''}
+        <div class="thread__body" data-body></div>
+        ${composeHtml()}`;
+      contextEl.innerHTML = contextHtml(thread.context, o, me);
+      contextEl.hidden = !thread.context;
+      renderThreadBody(true);
+      bindThread();
     }
-    await loadThread();
-    const timer = setInterval(() => loadThread(true), 8000);
-    onCleanup(() => clearInterval(timer));
+
+    async function setState(patch) {
+      try { const r = await api.patch(`/api/messages/${thread.other.id}`, patch); thread.state = r.state; renderThread(); refreshList(); } catch (err) { handleError(err); }
+    }
+
+    function bindThread() {
+      const toggle = $('[data-toggle-context]', threadEl);
+      if (toggle) toggle.addEventListener('click', () => inboxEl.classList.toggle('inbox--context'));
+      const closeCtx = $('[data-close-context]', contextEl);
+      if (closeCtx) closeCtx.addEventListener('click', () => inboxEl.classList.remove('inbox--context'));
+
+      $$('[data-action]', threadEl).forEach((b) => b.addEventListener('click', async () => {
+        const menu = $('[data-menu]', threadEl);
+        if (menu) menu.open = false;
+        const s = thread.state;
+        const other = thread.other;
+        switch (b.dataset.action) {
+          case 'star': return setState({ starred: !s.starred });
+          case 'mute': return setState({ muted: !s.muted });
+          case 'archive': {
+            await setState({ archived: !s.archived });
+            toast(s.archived ? 'Moved back to your inbox' : 'Conversation archived');
+            if (!s.archived) navigate('/messages');
+            return undefined;
+          }
+          case 'unread':
+            try { await api.post(`/api/messages/${other.id}/unread`); toast('Marked as unread'); navigate('/messages'); } catch (err) { handleError(err); }
+            return undefined;
+          case 'block':
+            try {
+              const r = s.blocked ? await api.del(`/api/messages/${other.id}/block`) : await api.post(`/api/messages/${other.id}/block`);
+              thread.state = r.state; renderThread(); refreshList();
+              toast(s.blocked ? `${other.name} unblocked` : `${other.name} blocked. They can no longer message you.`);
+            } catch (err) { handleError(err); }
+            return undefined;
+          case 'report': return reportModal('user', other.id, other.role);
+          default: return undefined;
+        }
+      }));
+
+      const form = $('[data-compose]', threadEl);
+      if (!form) return;
+      const textarea = form.body;
+      const fileInput = $('[data-file]', form);
+      const pendingEl = $('[data-pending]', form);
+      let pendingFile = null;
+      let pendingArt = null;
+      const autosize = () => { textarea.style.height = 'auto'; textarea.style.height = `${Math.min(160, textarea.scrollHeight)}px`; };
+      autosize();
+      textarea.addEventListener('input', () => { autosize(); writeDraft(thread.other.id, textarea.value); });
+      textarea.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); form.requestSubmit(); } });
+      function renderPending() {
+        const bits = [];
+        if (pendingFile) bits.push(`<span class="pending"><img src="${attr(URL.createObjectURL(pendingFile))}" alt=""><span>${esc(pendingFile.name)}</span><button type="button" data-clear-file aria-label="Remove photo">×</button></span>`);
+        if (pendingArt) bits.push(`<span class="pending"><img src="${attr(pendingArt.thumb_url || pendingArt.image_url)}" alt=""><span>${esc(pendingArt.title)}</span><button type="button" data-clear-art aria-label="Remove tattoo">×</button></span>`);
+        pendingEl.innerHTML = bits.join('');
+        pendingEl.hidden = !bits.length;
+        const cf = $('[data-clear-file]', pendingEl); if (cf) cf.addEventListener('click', () => { pendingFile = null; fileInput.value = ''; renderPending(); });
+        const ca = $('[data-clear-art]', pendingEl); if (ca) ca.addEventListener('click', () => { pendingArt = null; renderPending(); });
+      }
+      fileInput.addEventListener('change', () => { pendingFile = fileInput.files[0] || null; renderPending(); textarea.focus(); });
+      const share = $('[data-share-art]', form);
+      if (share) share.addEventListener('click', () => openArtworkPicker((a) => { pendingArt = a; renderPending(); textarea.focus(); }));
+      const insert = $('[data-insert-reply]', form);
+      if (insert) insert.addEventListener('click', () => openSavedReplies({ other: thread.other, onInsert: (text) => { textarea.value = textarea.value ? `${textarea.value.replace(/\s+$/, '')}\n${text}` : text; autosize(); writeDraft(thread.other.id, textarea.value); textarea.focus(); } }));
+
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const text = textarea.value.trim();
+        if (!text && !pendingFile && !pendingArt) return;
+        const send = $('.compose__send', form);
+        send.disabled = true;
+        try {
+          let r;
+          if (pendingFile) {
+            const fd = new FormData();
+            fd.append('body', text);
+            fd.append('image', pendingFile);
+            if (pendingArt) fd.append('artwork_id', pendingArt.id);
+            r = await api.post(`/api/messages/${thread.other.id}`, fd);
+          } else {
+            r = await api.post(`/api/messages/${thread.other.id}`, { body: text, artwork_id: pendingArt ? pendingArt.id : undefined });
+          }
+          textarea.value = ''; autosize(); writeDraft(thread.other.id, '');
+          pendingFile = null; pendingArt = null; fileInput.value = ''; renderPending();
+          if (!thread.messages.some((m) => m.id === r.message.id)) thread.messages.push(r.message);
+          if (thread.state.archived) thread.state.archived = false;
+          renderThreadBody(true); refreshList();
+        } catch (err) { handleError(err); } finally { send.disabled = false; textarea.focus(); }
+      });
+    }
+
+    try {
+      const r = await api.get(`/api/messages/${otherId}`);
+      thread = { other: r.other, messages: r.messages, has_more: r.has_more, state: r.state, context: r.context };
+    } catch (err) {
+      threadEl.innerHTML = `<div class="empty inbox__blank"><h3>${err.status === 404 ? 'User not found' : 'Could not open this conversation'}</h3><p>${esc(err.message || '')}</p></div>`;
+      return;
+    }
+    renderThread();
+    refreshUnread();
   }
 
   /* ---------- dashboard ---------- */
@@ -2105,8 +2495,8 @@
     [/^\/requests\/(\d+)$/, (m) => viewRequest(m[1])],
     [/^\/book\/(\d+)$/, (m, p) => viewBook(m[1], p)],
     [/^\/appointments$/, () => viewAppointments()],
-    [/^\/messages$/, () => viewMessages(null)],
-    [/^\/messages\/(\d+)$/, (m) => viewMessages(m[1])],
+    [/^\/messages$/, (_m, params) => viewMessages(null, params)],
+    [/^\/messages\/(\d+)$/, (m, params) => viewMessages(m[1], params)],
     [/^\/dashboard$/, (m, p) => viewDashboard(p)],
     [/^\/settings$/, () => viewSettings()],
     [/^\/login$/, (m, p) => viewLogin(p)],

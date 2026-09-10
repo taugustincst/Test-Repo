@@ -264,6 +264,9 @@ const exportQueries = {
   payments: db.prepare('SELECT * FROM payments WHERE payer_id = ? OR payee_id = ?'),
   messages: db.prepare('SELECT * FROM messages WHERE sender_id = ? OR recipient_id = ?'),
   reviews: db.prepare('SELECT * FROM reviews WHERE client_id = ? OR artist_id = ?'),
+  saved_replies: db.prepare('SELECT * FROM saved_replies WHERE user_id = ?'),
+  conversation_state: db.prepare('SELECT * FROM conversation_state WHERE user_id = ?'),
+  blocks: db.prepare('SELECT * FROM blocks WHERE blocker_id = ?'),
 };
 
 router.get('/me/export', requireAuth, (req, res) => {
@@ -285,6 +288,7 @@ const filesFor = {
   artworks: db.prepare('SELECT image_url AS url FROM artworks WHERE artist_id = ?'),
   references: db.prepare('SELECT reference_image_url AS url FROM tattoo_requests WHERE client_id = ? AND reference_image_url IS NOT NULL'),
 };
+const sentAttachments = db.prepare('SELECT attachments FROM messages WHERE sender_id = ? AND attachments IS NOT NULL');
 const purge = [
   'DELETE FROM galleries WHERE artist_id = ?',
   'DELETE FROM comments WHERE user_id = ?',
@@ -294,6 +298,9 @@ const purge = [
   'DELETE FROM proposals WHERE artist_id = ?',
   'DELETE FROM availability WHERE artist_id = ?',
   'DELETE FROM messages WHERE sender_id = ? OR recipient_id = ?',
+  'DELETE FROM conversation_state WHERE user_id = ? OR other_id = ?',
+  'DELETE FROM saved_replies WHERE user_id = ?',
+  'DELETE FROM blocks WHERE blocker_id = ? OR blocked_id = ?',
   'DELETE FROM reviews WHERE client_id = ?',
   'DELETE FROM sessions WHERE user_id = ?',
   'DELETE FROM password_resets WHERE user_id = ?',
@@ -325,6 +332,9 @@ router.delete('/me', requireAuth, async (req, res) => {
   }
   await mailer.send(mailer.templates.accountDeleted(user));
   const files = [...filesFor.artworks.all(id), ...filesFor.references.all(id)].map((f) => f.url);
+  sentAttachments.all(id).forEach((row) => {
+    try { JSON.parse(row.attachments).forEach((a) => { if (a && a.type === 'image' && a.url) files.push(a.url); }); } catch { /* ignore */ }
+  });
   db.transaction(() => {
     purge.forEach(({ stmt, two }) => (two ? stmt.run(id, id) : stmt.run(id)));
     if (user.role === 'artist') closeProfile.run(id);

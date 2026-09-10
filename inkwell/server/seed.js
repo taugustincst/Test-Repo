@@ -314,7 +314,7 @@ function seed() {
     INSERT INTO payments (appointment_id, payer_id, payee_id, kind, amount, status, provider, provider_ref, card_last4, note, paid_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 'paid' THEN datetime('now', '-2 days') ELSE NULL END)
   `);
-  const insertMessage = db.prepare('INSERT INTO messages (sender_id, recipient_id, body, read_at, created_at) VALUES (?, ?, ?, ?, datetime(\'now\', ?))');
+  const insertMessage = db.prepare('INSERT INTO messages (sender_id, recipient_id, body, attachments, read_at, created_at) VALUES (?, ?, ?, ?, ?, datetime(\'now\', ?, ?))');
 
   const run = db.transaction(() => {
     const artistIds = [];
@@ -485,19 +485,51 @@ function seed() {
       }
     });
 
-    // Messages.
+    // Messages: a populated inbox for Mara (artist 0) plus a few threads elsewhere.
+    const artFor = db.prepare('SELECT id, title, style, thumb_url, image_url FROM artworks WHERE artist_id = ? ORDER BY id LIMIT 6');
+    const maraArt = artFor.all(artistIds[0]);
+    const shared = (a) => JSON.stringify([{ type: 'artwork', id: a.id, title: a.title, style: a.style, thumb_url: a.thumb_url || a.image_url }]);
+    const photo = (a) => JSON.stringify([{ type: 'image', url: a.image_url, thumb_url: a.thumb_url || a.image_url, width: 800, height: 1000 }]);
+    // [from, to, body, days ago, hours after midnight, read?, attachments]
     const chat = [
-      [clientIds[0], artistIds[0], 'Hi Mara! Saw your sternum mandalas. Would you be up for something similar but on the forearm?', '-5 days', true],
-      [artistIds[0], clientIds[0], 'Hey Jordan, absolutely. Send over any references and I will sketch some options before our consult.', '-5 days', true],
-      [clientIds[0], artistIds[0], 'Perfect, I just posted a request with the details. Booked a slot for next week too.', '-4 days', true],
-      [artistIds[0], clientIds[0], 'Saw it, looks great. I will confirm the booking once I have looked at my schedule.', '-4 days', false],
-      [clientIds[1], artistIds[3], 'Hello! I am very new to this. Does a wrist tattoo hurt a lot?', '-3 days', true],
-      [artistIds[3], clientIds[1], 'It is one of the more sensitive spots, but for something tiny it is over in minutes. I will walk you through everything.', '-3 days', false],
-      [clientIds[2], artistIds[1], 'Stoked for the panther. Should I shave the area beforehand?', '-2 days', true],
-      [artistIds[1], clientIds[2], 'No need, I will handle that. Just eat a proper meal and bring water.', '-1 days', false],
+      // Jordan and Mara: an active booking conversation.
+      [clientIds[0], artistIds[0], 'Hi Mara! Saw your sternum mandalas. Would you be up for something similar but on the forearm?', 5, 9, true],
+      [artistIds[0], clientIds[0], 'Hey Jordan, absolutely. Send over any references and I will sketch some options before our consult.', 5, 11, true],
+      [clientIds[0], artistIds[0], 'Here is roughly the placement I had in mind.', 5, 12, true, maraArt[1] ? photo(maraArt[1]) : null],
+      [artistIds[0], clientIds[0], 'That works well with the shape of the forearm. Something in this direction?', 5, 13, true, maraArt[0] ? shared(maraArt[0]) : null],
+      [clientIds[0], artistIds[0], 'Perfect, I just posted a request with the details. Booked a slot for next week too.', 4, 10, true],
+      [artistIds[0], clientIds[0], 'Saw it, looks great. I will confirm the booking once I have looked at my schedule.', 4, 12, false],
+      // Elena and Mara: deposit question, answered quickly.
+      [clientIds[1], artistIds[0], 'Hello! What is your deposit policy? I might need to move my date by a week.', 2, 15, true],
+      [artistIds[0], clientIds[1], 'Deposits are $100 and come off the final price. Moving a date is free with 48 hours notice, so a week is no problem at all.', 2, 16, true],
+      [clientIds[1], artistIds[0], 'Great, thank you! I will keep the date for now.', 2, 17, false],
+      // Hana and Mara: unanswered, new today.
+      [clientIds[4], artistIds[0], 'Hi! Do you do small pieces? I am after a tiny geometric moon behind the ear, maybe 2 cm.', 0, 8, false],
+      [clientIds[4], artistIds[0], 'Happy to travel to Portland if you have a gap in the next month.', 0, 8, false],
+      // Sasha and Mara: an older, finished conversation.
+      [clientIds[3], artistIds[0], 'Healed photo as promised. Everyone asks where I got it done.', 21, 18, true, maraArt[2] ? photo(maraArt[2]) : null],
+      [artistIds[0], clientIds[3], 'That healed beautifully. Thanks for sending it, made my day.', 21, 19, true],
+      // Noah and Mara: archived, long ago.
+      [clientIds[5], artistIds[0], 'Are you ever in Chicago for guest spots?', 48, 12, true],
+      [artistIds[0], clientIds[5], 'Not this year, but I will announce it here first if that changes.', 47, 9, true],
+      // Other artists.
+      [clientIds[7], artistIds[3], 'Hello! I am very new to this. Does a wrist tattoo hurt a lot?', 3, 14, true],
+      [artistIds[3], clientIds[7], 'It is one of the more sensitive spots, but for something tiny it is over in minutes. I will walk you through everything.', 3, 15, false],
+      [clientIds[2], artistIds[1], 'Stoked for the panther. Should I shave the area beforehand?', 2, 10, true],
+      [artistIds[1], clientIds[2], 'No need, I will handle that. Just eat a proper meal and bring water.', 1, 9, false],
     ];
     const readStamp = new Date().toISOString().slice(0, 19).replace('T', ' ');
-    chat.forEach(([from, to, body, when, read]) => insertMessage.run(from, to, body, read ? readStamp : null, when));
+    const nowHour = new Date().getUTCHours();
+    chat.forEach(([from, to, body, days, hour, read, attachments]) => insertMessage.run(from, to, body, attachments || null, read ? readStamp : null, `-${days} days`, `${Math.min(hour, days === 0 ? nowHour : 23) - nowHour} hours`));
+    const insertState = db.prepare('INSERT OR REPLACE INTO conversation_state (user_id, other_id, starred, muted, archived_at) VALUES (?, ?, ?, ?, ?)');
+    insertState.run(artistIds[0], clientIds[0], 1, 0, null);
+    insertState.run(artistIds[0], clientIds[5], 0, 0, readStamp);
+    const insertReply = db.prepare('INSERT INTO saved_replies (user_id, title, body) VALUES (?, ?, ?)');
+    artistIds.forEach((artistId) => {
+      insertReply.run(artistId, 'Booking steps', 'Hi {first_name}, thanks for reaching out! To get started, send me a few reference images and the placement you have in mind. Once we have settled on a design you can book a slot from my profile and pay the {deposit} deposit to lock it in.');
+      insertReply.run(artistId, 'Deposit policy', 'The {deposit} deposit comes off your final price. It is refundable if you cancel with more than 48 hours notice, and moving your date is free.');
+      insertReply.run(artistId, 'Aftercare', 'Keep the wrap on for the time we discussed, then wash gently with unscented soap, pat dry and apply a thin layer of ointment twice a day. No soaking, sun or scratching for two weeks. Message me anytime if something looks off.');
+    });
   });
 
   run();

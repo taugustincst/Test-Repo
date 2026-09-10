@@ -136,6 +136,7 @@ function createApp(options = {}) {
     app.use('/api/auth/register', rateLimit({ name: 'register', windowMs: 60 * 60000, max: limits.register || 10, message: 'Too many accounts created from this network. Try again later.' }));
     app.use('/api/auth/forgot', rateLimit({ name: 'forgot', windowMs: 15 * 60000, max: limits.forgot || 5, message: 'Too many reset requests. Check your inbox or try again later.' }));
     app.use('/api/reports', rateLimit({ name: 'reports', windowMs: 60 * 60000, max: limits.reports || 30 }));
+    app.use('/api/messages', rateLimit({ name: 'messages', windowMs: 60000, max: limits.messages || 120, keyFn: (r) => (r.user ? `u${r.user.id}` : r.ip), message: 'Slow down a little. Try again in a minute.' }));
   }
 
   app.get('/api/health', (_req, res) => {
@@ -246,6 +247,7 @@ if (require.main === module) {
 
   const shutdown = (signal) => {
     console.log(`${signal} received, shutting down...`);
+    require('./messaging').closeAll();
     server.close(() => {
       try { db.close(); } catch { /* already closed */ }
       process.exit(0);

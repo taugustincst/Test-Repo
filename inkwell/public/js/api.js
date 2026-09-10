@@ -43,6 +43,7 @@
     get: (url, params) => request('GET', url + qs(params)),
     post: (url, body) => request('POST', url, body),
     put: (url, body) => request('PUT', url, body),
+    patch: (url, body) => request('PATCH', url, body),
     del: (url, body) => request('DELETE', url, body),
     isNative,
     clearToken: () => setToken(null),
