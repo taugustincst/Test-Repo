@@ -533,6 +533,10 @@ a.ctx__item:hover { border-color: var(--line-strong); }
   .thread__back { display: inline-flex; }
   .thread__head { padding: 8px 10px; gap: 8px; }
   .thread__actions .btn--sm { padding: 6px 10px; }
+  .thread__loc { display: none; }
+  .compose__tool { width: 34px; height: 34px; }
+  .compose__row { gap: 2px; }
+  .thread__compose textarea { margin-left: 4px; }
   .bubble { max-width: 84%; }
   .compose__hint { display: none; }
   .page-head .row .btn span { display: none; }

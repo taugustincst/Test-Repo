@@ -1569,7 +1569,7 @@
         <div class="compose__row">
           <label class="compose__tool" title="Attach a photo"><input type="file" name="image" accept="image/jpeg,image/png,image/webp,image/gif" hidden data-file>${MSG_ICONS.photo}<span class="sr-only">Attach a photo</span></label>
           ${me.role === 'artist' ? `<button type="button" class="compose__tool" title="Share a tattoo from your galleries" data-share-art>${MSG_ICONS.art}<span class="sr-only">Share a tattoo</span></button><button type="button" class="compose__tool" title="Insert a saved reply" data-insert-reply>${MSG_ICONS.reply}<span class="sr-only">Saved replies</span></button>` : ''}
-          <textarea name="body" rows="1" placeholder="Write a message" aria-label="Message">${esc(readDraft(thread.other.id))}</textarea>
+          <textarea name="body" rows="1" placeholder="Message" aria-label="Message">${esc(readDraft(thread.other.id))}</textarea>
           <button class="btn compose__send" aria-label="Send">${MSG_ICONS.send}</button>
         </div>
         <div class="small faint compose__hint">Enter to send, Shift+Enter for a new line.</div>
@@ -1585,7 +1585,7 @@
           ${avatar(o.avatar_url, o.name, 'avatar--sm')}
           <div class="thread__who">
             ${o.role === 'artist' ? `<a href="/artists/${o.id}"><strong>${esc(o.name)}</strong></a>` : `<strong>${esc(o.name)}</strong>`}${s.starred ? `<i class="convo__star">${MSG_ICONS.starFilled}</i>` : ''}
-            <div class="small muted">${o.role === 'artist' ? `${esc(o.studio_name || 'Artist')}${o.replies_within ? ` · ${esc(o.replies_within)}` : ''}` : `Client${o.location ? ` · ${esc(o.location)}` : ''}`}</div>
+            <div class="small muted">${o.role === 'artist' ? `${esc(o.studio_name || 'Artist')}${o.replies_within ? ` · ${esc(o.replies_within)}` : ''}` : `Client${o.location ? `<span class="thread__loc"> · ${esc(o.location)}</span>` : ''}`}</div>
           </div>
           <div class="thread__actions">
             ${thread.context ? `<button type="button" class="btn btn--ghost btn--sm thread__details" data-toggle-context>${MSG_ICONS.info}<span>Details</span></button>` : ''}
