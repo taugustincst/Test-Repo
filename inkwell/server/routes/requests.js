@@ -25,9 +25,9 @@ const listForArtist = db.prepare(`
 `);
 const insertRequest = db.prepare(`
   INSERT INTO tattoo_requests
-    (client_id, title, description, style, placement, size, budget_min, budget_max, location, reference_image_url)
+    (client_id, title, description, style, placement, size, budget_min, budget_max, location, reference_image_url, collection_id)
   VALUES
-    (@client_id, @title, @description, @style, @placement, @size, @budget_min, @budget_max, @location, @reference_image_url)
+    (@client_id, @title, @description, @style, @placement, @size, @budget_min, @budget_max, @location, @reference_image_url, @collection_id)
 `);
 const updateStatus = db.prepare('UPDATE tattoo_requests SET status = ? WHERE id = ?');
 const deleteRequest = db.prepare('DELETE FROM tattoo_requests WHERE id = ?');
@@ -55,9 +55,18 @@ function money(value) {
   return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
 }
 
+const collectionForRequest = db.prepare(`
+  SELECT c.id, c.title, c.token, c.is_public,
+         (SELECT COUNT(*) FROM collection_items ci WHERE ci.collection_id = c.id) AS item_count,
+         (SELECT COALESCE(a.thumb_url, a.image_url) FROM collection_items ci JOIN artworks a ON a.id = ci.artwork_id WHERE ci.collection_id = c.id ORDER BY ci.created_at DESC LIMIT 1) AS cover_url
+  FROM collections c WHERE c.id = ? AND c.user_id = ?
+`);
+const publishCollection = db.prepare(`UPDATE collections SET is_public = 1, updated_at = datetime('now') WHERE id = ? AND user_id = ?`);
+
 function shape(row, user) {
   if (!row) return row;
   row.is_owner = !!user && user.id === row.client_id;
+  row.collection = row.collection_id ? collectionForRequest.get(row.collection_id, row.client_id) || null : null;
   if (user && user.role === 'artist') {
     const mine = myProposal.get(row.id, user.id);
     row.my_proposal = mine || null;
@@ -97,6 +106,13 @@ router.post('/', requireRole('client'), upload.single('reference'), async (req, 
   if (req.file) {
     try { referenceUrl = await processReference(req.file); } catch (err) { return res.status(400).json({ error: err.message }); }
   }
+  // A reference board attached to a request is made shareable so the artists reading it can open it.
+  let collectionId = Number(body.collection_id) || null;
+  if (collectionId) {
+    const board = collectionForRequest.get(collectionId, req.user.id);
+    if (!board) return res.status(404).json({ error: 'That board is not yours or no longer exists.' });
+    publishCollection.run(board.id, req.user.id);
+  } else collectionId = null;
   const info = insertRequest.run({
     client_id: req.user.id,
     title: title.slice(0, 120),
@@ -108,6 +124,7 @@ router.post('/', requireRole('client'), upload.single('reference'), async (req, 
     budget_max: budgetMax,
     location: String(body.location || req.user.location || '').slice(0, 120),
     reference_image_url: referenceUrl,
+    collection_id: collectionId,
   });
   res.status(201).json({ request: shape(getRequest.get(info.lastInsertRowid), req.user) });
 });

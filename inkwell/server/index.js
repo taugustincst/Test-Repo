@@ -26,15 +26,19 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 /* ---------- share previews (Open Graph) for crawlers and link unfurls ---------- */
 
 const metaQueries = {
+  collection: db.prepare(`
+    SELECT c.title, c.description, c.token, c.is_public, u.name AS owner_name,
+           (SELECT COUNT(*) FROM collection_items ci WHERE ci.collection_id = c.id) AS item_count
+    FROM collections c JOIN users u ON u.id = c.user_id WHERE c.token = ?`),
   artist: db.prepare(`
-    SELECT u.name, u.bio, u.location, u.avatar_url, p.studio_name,
+    SELECT u.id, u.name, u.bio, u.location, u.avatar_url, p.studio_name,
            (SELECT image_url FROM artworks a WHERE a.artist_id = u.id ORDER BY a.created_at DESC LIMIT 1) AS cover
     FROM users u JOIN artist_profiles p ON p.user_id = u.id WHERE u.id = ? AND u.role = 'artist' AND u.suspended_at IS NULL`),
   artwork: db.prepare(`
-    SELECT a.title, a.description, a.image_url, a.style, u.name AS artist_name
+    SELECT a.id, a.title, a.description, a.image_url, a.style, u.name AS artist_name
     FROM artworks a JOIN users u ON u.id = a.artist_id WHERE a.id = ? AND u.suspended_at IS NULL`),
   gallery: db.prepare(`
-    SELECT g.title, g.description, u.name AS artist_name,
+    SELECT g.id, g.title, g.description, u.name AS artist_name,
            (SELECT image_url FROM artworks a WHERE a.gallery_id = g.id ORDER BY a.created_at DESC LIMIT 1) AS cover
     FROM galleries g JOIN users u ON u.id = g.artist_id WHERE g.id = ? AND u.suspended_at IS NULL`),
   request: db.prepare(`
@@ -47,16 +51,19 @@ function pageMeta(urlPath) {
   let m;
   if ((m = urlPath.match(/^\/artists\/(\d+)$/))) {
     const a = metaQueries.artist.get(m[1]);
-    if (a) return { title: `${a.name} · Tattoo artist on Inkwell`, description: `${a.studio_name ? `${a.studio_name}${a.location ? `, ${a.location}` : ''}. ` : ''}${a.bio || 'See galleries, reviews and open booking slots.'}`.slice(0, 300), image: a.cover || a.avatar_url };
+    if (a) return { title: `${a.name} · Tattoo artist on Inkwell`, description: `${a.studio_name ? `${a.studio_name}${a.location ? `, ${a.location}` : ''}. ` : ''}${a.bio || 'See galleries, reviews and open booking slots.'}`.slice(0, 300), image: `/og/artists/${a.id}.png` };
   } else if ((m = urlPath.match(/^\/artworks\/(\d+)$/))) {
     const a = metaQueries.artwork.get(m[1]);
-    if (a) return { title: `${a.title} by ${a.artist_name} · Inkwell`, description: (a.description || `${a.style || 'Tattoo'} by ${a.artist_name}`).slice(0, 300), image: a.image_url };
+    if (a) return { title: `${a.title} by ${a.artist_name} · Inkwell`, description: (a.description || `${a.style || 'Tattoo'} by ${a.artist_name}`).slice(0, 300), image: `/og/artworks/${a.id}.png` };
   } else if ((m = urlPath.match(/^\/galleries\/(\d+)$/))) {
     const g = metaQueries.gallery.get(m[1]);
-    if (g) return { title: `${g.title} · ${g.artist_name} on Inkwell`, description: (g.description || `A gallery by ${g.artist_name}`).slice(0, 300), image: g.cover };
+    if (g) return { title: `${g.title} · ${g.artist_name} on Inkwell`, description: (g.description || `A gallery by ${g.artist_name}`).slice(0, 300), image: `/og/galleries/${g.id}.png` };
   } else if ((m = urlPath.match(/^\/requests\/(\d+)$/))) {
     const r = metaQueries.request.get(m[1]);
     if (r) return { title: `${r.title} · Client request on Inkwell`, description: r.description.slice(0, 300), image: null };
+  } else if ((m = urlPath.match(/^\/c\/([A-Za-z0-9_-]+)$/))) {
+    const c = metaQueries.collection.get(m[1]);
+    if (c && c.is_public) return { title: `${c.title} · a reference board on Inkwell`, description: (c.description || `${c.item_count} tattoo${c.item_count === 1 ? '' : 's'} saved by ${c.owner_name}. Share it with your artist or your friends.`).slice(0, 300), image: `/og/collections/${c.token}.png` };
   } else if (urlPath === '/artists') {
     return { ...base, title: 'Find a tattoo artist · Inkwell' };
   } else if (urlPath === '/requests') {
@@ -153,6 +160,8 @@ function createApp(options = {}) {
   app.use('/api', require('./routes/galleries'));
   app.use('/api/requests', require('./routes/requests'));
   app.use('/api/messages', require('./routes/messages'));
+  app.use('/api/collections', require('./routes/collections'));
+  app.use(require('./routes/share')); // /og/*.png share cards, /api/share/qr.svg, /embed/artists/:id
   app.use('/api/payments', require('./routes/payments'));
   app.use('/api/reports', require('./routes/reports'));
   app.use('/api/admin', require('./routes/admin'));
@@ -240,6 +249,7 @@ if (require.main === module) {
   if (process.env.INKWELL_SKIP_SEED !== '1') ensureSeeded();
   bootstrapAdmin();
   configWarnings().forEach((w) => console.warn(`[config] ${w}`));
+  require('./reminders').start();
   const port = Number(process.env.PORT) || 3000;
   const server = createApp().listen(port, () => {
     console.log(`Inkwell ${pkg.version} running at http://localhost:${port} (${isProd ? 'production' : 'development'})`);

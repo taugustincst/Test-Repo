@@ -112,11 +112,12 @@
 
   /* ---------- modal ---------- */
 
-  function openModal(html, { small = false } = {}) {
+  function openModal(html, { small = false, onClose = null } = {}) {
     closeModal();
     modalRoot.innerHTML = `<div class="modal-backdrop" data-close><div class="modal${small ? ' modal--sm' : ''}" role="dialog" aria-modal="true">${html}</div></div>`;
     document.body.style.overflow = 'hidden';
     const backdrop = modalRoot.firstElementChild;
+    backdrop._onClose = onClose;
     backdrop.addEventListener('click', (e) => { if (e.target === backdrop || e.target.closest('[data-close-modal]')) closeModal(); });
     const onKey = (e) => { if (e.key === 'Escape') closeModal(); };
     document.addEventListener('keydown', onKey);
@@ -124,11 +125,13 @@
     return backdrop.querySelector('.modal');
   }
 
-  function closeModal() {
+  function closeModal({ silent = false } = {}) {
     const backdrop = modalRoot.firstElementChild;
     if (backdrop && backdrop._onKey) document.removeEventListener('keydown', backdrop._onKey);
+    const onClose = backdrop && !silent ? backdrop._onClose : null;
     modalRoot.innerHTML = '';
     document.body.style.overflow = '';
+    if (onClose) onClose();
   }
 
   /* ---------- artwork card + lightbox ---------- */
@@ -169,6 +172,8 @@
             ${artwork.description ? `<p class="muted">${esc(artwork.description)}</p>` : ''}
             <div class="row" style="margin-bottom:16px">
               <button class="like-btn${artwork.liked ? ' liked' : ''}" data-like>♥ <span>${artwork.like_count}</span></button>
+              <button class="like-btn${artwork.saved ? ' liked' : ''}" data-save title="Save to a board">${artwork.saved ? SHARE_ICONS.saved : SHARE_ICONS.save} <span>${artwork.saved ? 'Saved' : 'Save'}</span></button>
+              <button class="like-btn" data-share-art-btn title="Share">${SHARE_ICONS.share} <span>Share</span></button>
               ${me && me.id !== artwork.artist_id ? `<a class="btn btn--ghost btn--sm" href="/messages/${artwork.artist_id}" data-close-modal>Message artist</a>` : ''}
               ${me && me.role === 'client' ? `<a class="btn btn--sm" href="/book/${artwork.artist_id}" data-close-modal>Book ${esc(artwork.artist_name.split(' ')[0])}</a>` : ''}
               ${canEdit ? '<button class="btn btn--danger btn--sm" data-delete-art>Delete</button>' : ''}
@@ -192,6 +197,9 @@
           </div>
         </div>`);
 
+      // Save and Share open their own dialog; the artwork comes back when it closes.
+      $('[data-save]', modal).addEventListener('click', () => savePicker(artwork, (saved) => { artwork.saved = saved; }, () => render()));
+      $('[data-share-art-btn]', modal).addEventListener('click', () => shareSheet({ title: `${artwork.title} by ${artwork.artist_name}`, text: `${artwork.title}${artwork.style ? ` (${artwork.style})` : ''} by ${artwork.artist_name} on Inkwell`, path: `/artworks/${artwork.id}`, card: `/og/artworks/${artwork.id}.png`, onClose: () => render() }));
       $('[data-like]', modal).addEventListener('click', async () => {
         if (!requireLogin()) { closeModal(); return; }
         try {
@@ -246,6 +254,7 @@
         <a href="/notifications" class="${active('/notifications')}" title="Notifications" aria-label="Notifications">🔔<span class="nav-label">Notifications</span>${state.notifUnread ? `<span class="badge-dot">${state.notifUnread}</span>` : ''}</a>
         <a href="/messages" class="${active('/messages')}">Messages${state.unread ? `<span class="badge-dot">${state.unread}</span>` : ''}</a>
         <a href="/appointments" class="${active('/appointments')}">Bookings</a>
+        ${u.role === 'client' ? `<a href="/collections" class="${active('/collections') || active('/c/')}">Boards</a>` : ''}
         <a href="/dashboard" class="${active('/dashboard')}">Dashboard</a>
         ${u.is_admin ? `<a href="/admin" class="${active('/admin')}">Admin</a>` : ''}
         <a href="/settings" class="${active('/settings')}" title="Settings">${avatar(u.avatar_url, u.name, 'nav-avatar')} <span>${esc(u.name.split(' ')[0])}</span></a>
@@ -449,28 +458,6 @@
     return `<span class="row" style="gap:6px">${stars(a.rating)}<span class="small muted">${a.rating} · ${a.review_count} review${a.review_count === 1 ? '' : 's'}</span></span>`;
   }
 
-  function reviewModal(apptId, reload) {
-    let rating = 5;
-    const modal = openModal(`
-      <div class="modal__panel">
-        <div class="modal__head"><h3 style="margin:0">How was your session?</h3><button class="modal__close" data-close-modal>×</button></div>
-        <form class="form modal__body" data-form>
-          <div class="error" hidden></div>
-          <div class="field"><span class="label">Rating</span><div class="star-picker" data-picker>${[1, 2, 3, 4, 5].map((i) => `<button type="button" data-star="${i}" class="on">★</button>`).join('')}</div></div>
-          <div class="field"><label>Tell others about it (optional)</label><textarea name="body" placeholder="How did the artist handle the design, the session, the healing advice?"></textarea></div>
-          <button class="btn btn--block">Post review</button>
-        </form>
-      </div>`, { small: true });
-    $$('[data-star]', modal).forEach((b) => b.addEventListener('click', () => {
-      rating = Number(b.dataset.star);
-      $$('[data-star]', modal).forEach((x) => x.classList.toggle('on', Number(x.dataset.star) <= rating));
-    }));
-    const form = $('[data-form]', modal);
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      try { await api.post(`/api/appointments/${apptId}/review`, { rating, body: form.body.value }); closeModal(); toast('Review posted'); reload(); } catch (err) { handleError(err, $('.error', form)); }
-    });
-  }
 
   async function viewHome() {
     loading();
@@ -644,6 +631,7 @@
             <a class="btn btn--ghost" href="/messages/${artist.id}">Message</a>
             ${!me || me.role === 'client' ? `<a class="btn" href="/book/${artist.id}">Book a session</a>` : ''}
             ${me ? '<button class="link small" data-report-user>Report</button>' : ''}`}
+          ${shareButton({ title: `${artist.name} on Inkwell`, text: `${artist.name}${artist.studio_name ? ` · ${artist.studio_name}` : ''}: galleries, reviews and booking on Inkwell`, path: `/artists/${artist.id}`, card: `/og/artists/${artist.id}.png` })}
         </div>
       </div>
       <section class="section">
@@ -658,39 +646,11 @@
         <div class="section__head"><h2>Recent work</h2></div>
         ${work.artworks.length ? `<div class="grid-art">${work.artworks.map(artCard).join('')}</div>` : '<div class="empty"><p>No pieces shared yet.</p></div>'}
       </section>
-      <section class="section">
-        <div class="section__head"><h2>Reviews</h2>${reviews.summary.review_count ? `<span class="row" style="gap:8px">${stars(reviews.summary.rating)}<strong>${reviews.summary.rating}</strong><span class="muted small">from ${reviews.summary.review_count} completed session${reviews.summary.review_count === 1 ? '' : 's'}</span></span>` : ''}</div>
-        ${reviews.reviews.length ? `<div class="stack">${reviews.reviews.map((rv) => `
-          <div class="card review" data-review="${rv.id}">
-            <div class="row row--between">
-              <div class="row">${avatar(rv.client_avatar_url, rv.client_name, 'avatar--sm')}<div><strong>${esc(rv.client_name)}</strong><div class="small muted">${stars(rv.rating)} · session on ${fmtSlot(rv.starts_at).split(',').slice(0, 2).join(',')}</div></div></div>
-              <span class="faint small">${timeAgo(rv.created_at)}</span>
-            </div>
-            ${rv.body ? `<p style="margin:10px 0 0">${esc(rv.body)}</p>` : ''}
-            ${rv.artist_reply ? `<div class="review__reply"><strong class="small">Reply from ${esc(artist.name.split(' ')[0])}</strong><p style="margin:4px 0 0">${esc(rv.artist_reply)}</p></div>` : ''}
-            <div class="row small" style="margin-top:8px">
-              ${isMe && !rv.artist_reply ? `<button class="link" data-reply="${rv.id}">Reply</button>` : ''}
-              ${me && (me.id === rv.client_id || me.is_admin) ? `<button class="link" data-del-review="${rv.id}">Delete</button>` : ''}
-              ${me && me.id !== rv.client_id && !isMe ? `<button class="link" data-report-review="${rv.id}">Report</button>` : ''}
-            </div>
-          </div>`).join('')}</div>` : '<div class="empty"><p>No reviews yet. Clients can review after a completed session.</p></div>'}
-      </section>`;
+      <section class="section" data-reviews></section>`;
+    reviewsSection($('[data-reviews]'), artist, reviews, () => viewArtist(id));
+    bindShare();
     const reportUser = $('[data-report-user]');
     if (reportUser) reportUser.addEventListener('click', () => reportModal('user', artist.id, 'artist'));
-    $$('[data-report-review]').forEach((b) => b.addEventListener('click', () => reportModal('review', Number(b.dataset.reportReview), 'review')));
-    $$('[data-del-review]').forEach((b) => b.addEventListener('click', async () => {
-      if (!confirm('Delete this review?')) return;
-      try { await api.del(`/api/reviews/${b.dataset.delReview}`); toast('Review deleted'); viewArtist(id); } catch (err) { handleError(err); }
-    }));
-    $$('[data-reply]').forEach((b) => b.addEventListener('click', () => {
-      const card = b.closest('[data-review]');
-      card.insertAdjacentHTML('beforeend', `<form class="row" data-reply-form style="margin-top:10px"><input name="body" placeholder="Thank them or add context" required style="flex:1;padding:9px 12px;border-radius:999px;border:1px solid var(--line-strong);background:var(--bg);color:var(--text)"><button class="btn btn--sm">Post reply</button></form>`);
-      b.remove();
-      $('[data-reply-form]', card).addEventListener('submit', async (e) => {
-        e.preventDefault();
-        try { await api.post(`/api/reviews/${card.dataset.review}/reply`, { body: e.target.body.value }); viewArtist(id); } catch (err) { handleError(err); }
-      });
-    }));
     const follow = $('[data-follow]');
     if (follow) follow.addEventListener('click', async () => {
       if (!requireLogin()) return;
@@ -715,10 +675,11 @@
           <h1>${esc(gallery.title)}</h1>
           ${gallery.description ? `<p class="muted">${esc(gallery.description)}</p>` : ''}
         </div>
-        ${isOwner ? '<div class="row"><button class="btn" data-upload>Upload artwork</button><button class="btn btn--ghost" data-edit>Edit</button><button class="btn btn--danger" data-delete>Delete gallery</button></div>' : ''}
+        <div class="row">${shareButton({ title: `${gallery.title} by ${gallery.artist_name}`, text: `${gallery.title}, a gallery by ${gallery.artist_name} on Inkwell`, path: `/galleries/${gallery.id}`, card: `/og/galleries/${gallery.id}.png` })}${isOwner ? '<button class="btn" data-upload>Upload artwork</button><button class="btn btn--ghost" data-edit>Edit</button><button class="btn btn--danger" data-delete>Delete gallery</button>' : ''}</div>
       </div>
       ${gallery.artworks.length ? `<div class="grid-art">${gallery.artworks.map(artCard).join('')}</div>` : `<div class="empty"><h3>This gallery is empty</h3>${isOwner ? '<p>Upload your first piece to get started.</p>' : ''}</div>`}`;
 
+    bindShare();
     if (!isOwner) return;
     $('[data-upload]').addEventListener('click', () => {
       const modal = openModal(`
@@ -827,9 +788,13 @@
     load();
   }
 
-  function viewNewRequest() {
+  async function viewNewRequest(params) {
     if (!requireLogin('/requests/new')) return;
     if (state.user.role !== 'client') { main.innerHTML = '<div class="empty"><h3>Only clients can post requests</h3><p>Browse <a class="link" href="/requests">open requests</a> instead.</p></div>'; return; }
+    loading();
+    let boards = [];
+    try { ({ collections: boards } = await api.get('/api/collections')); } catch { boards = []; }
+    const preset = params ? params.get('board') : null;
     main.innerHTML = `
       <div class="narrow">
         <h1>Post a request</h1>
@@ -851,6 +816,7 @@
             <div class="field"><label>Budget up to ($)</label><input name="budget_max" type="number" min="0" step="10"></div>
           </div>
           <div class="field"><label>Reference image (optional)</label><input type="file" name="reference" accept="image/*"></div>
+          <div class="field"><label>Reference board (optional)</label><select name="collection_id"><option value="">None</option>${boards.map((c) => `<option value="${c.id}" ${String(c.id) === String(preset) ? 'selected' : ''}>${esc(c.title)} (${c.item_count})</option>`).join('')}</select><span class="hint">${boards.length ? 'Attaching a board makes it viewable by anyone with the link, so artists can open it.' : 'Save tattoos you like into a board and attach it here so artists see your taste.'}</span></div>
           <button class="btn btn--lg">Post request</button>
         </form>
       </div>`;
@@ -909,6 +875,7 @@
           </div>
           <p style="white-space:pre-wrap">${esc(request.description)}</p>
           ${request.reference_image_url ? `<img src="${attr(request.reference_image_url)}" alt="Reference" style="max-width:360px;border-radius:12px;border:1px solid var(--line)">` : ''}
+          ${request.collection ? `<a class="board board--inline" href="/c/${attr(request.collection.token)}"><div class="board__cover">${request.collection.cover_url ? `<img src="${attr(request.collection.cover_url)}" alt="">` : ''}</div><div class="board__body"><span class="small muted">Reference board</span><strong>${esc(request.collection.title)}</strong><span class="small muted">${request.collection.item_count} saved piece${request.collection.item_count === 1 ? '' : 's'} · open board</span></div></a>` : ''}
           <section class="section">
             <div class="section__head"><h2>Proposals ${isOwner ? `(${request.proposals.length})` : ''}</h2></div>
             ${isOwner ? (request.proposals.length ? request.proposals.map(proposalHtml).join('') : '<div class="empty"><h3>No proposals yet</h3><p>Artists are browsing. You can also message an artist directly.</p></div>') : ''}
@@ -1140,7 +1107,7 @@
       } catch (err) { handleError(err); }
     }));
     $$('[data-pay]', root).forEach((b) => b.addEventListener('click', () => payModal(b.dataset.pay, Number(b.dataset.amount), b.dataset.kind, reload)));
-    $$('[data-review-appt]', root).forEach((b) => b.addEventListener('click', () => reviewModal(b.dataset.reviewAppt, reload)));
+    $$('[data-review-appt]', root).forEach((b) => b.addEventListener('click', () => reviewModal({ appointmentId: b.dataset.reviewAppt }, reload)));
   }
 
   function completeModal(id, reload) {
@@ -1225,7 +1192,7 @@
     navigate('/appointments');
   }
 
-  async function viewAppointments() {
+  async function viewAppointments(params) {
     if (!requireLogin('/appointments')) return;
     loading();
     let list;
@@ -1246,6 +1213,404 @@
         <div class="stack">${past.length ? past.map(apptCard).join('') : '<p class="faint">No history yet.</p>'}</div>
       </section>`;
     bindApptActions(main, viewAppointments);
+    const wanted = params && params.get('review');
+    if (wanted && !isArtist) {
+      const appt = list.find((a) => String(a.id) === String(wanted));
+      history.replaceState({}, '', '/appointments');
+      if (appt && appt.status === 'completed' && !appt.review_id) reviewModal({ appointmentId: appt.id }, () => viewAppointments());
+    }
+  }
+
+  /* ---------- sharing, boards and reviews ---------- */
+
+  const SHARE_ICONS = {
+    share: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 8l5-5 5 5"/><path d="M5 13v6h14v-6"/></svg>',
+    save: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M6 3h12v18l-6-4-6 4z"/></svg>',
+    saved: '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M6 3h12v18l-6-4-6 4z"/></svg>',
+    link: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>',
+    qr: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3h-3zM20 14v7h-3"/></svg>',
+    mail: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>',
+    card: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 15l5-5 4 4 3-3 6 6"/></svg>',
+    device: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 10.7l6.8-4M8.6 13.3l6.8 4"/></svg>',
+  };
+  const absUrl = (p) => (p.startsWith('http') ? p : `${location.origin}${p}`);
+
+  async function copyText(text) {
+    try { await navigator.clipboard.writeText(text); return true; } catch {
+      const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select();
+      let ok = false; try { ok = document.execCommand('copy'); } catch { ok = false; } ta.remove(); return ok;
+    }
+  }
+
+  /** Share sheet: native share where the browser has it, plus copy, QR, share card and the usual apps. */
+  function shareSheet({ title, text, path, card, onClose }) {
+    const url = absUrl(path);
+    const enc = encodeURIComponent;
+    const canNative = !!navigator.share;
+    const apps = [
+      ['WhatsApp', `https://wa.me/?text=${enc(`${text} ${url}`)}`],
+      ['X', `https://twitter.com/intent/tweet?text=${enc(text)}&url=${enc(url)}`],
+      ['Facebook', `https://www.facebook.com/sharer/sharer.php?u=${enc(url)}`],
+      ...(card ? [['Pinterest', `https://pinterest.com/pin/create/button/?url=${enc(url)}&media=${enc(absUrl(card))}&description=${enc(text)}`]] : []),
+    ];
+    const modal = openModal(`
+      <div class="modal__panel">
+        <div class="modal__head"><div><h3 style="margin:0">Share</h3><p class="small muted" style="margin:4px 0 0">${esc(title)}</p></div><button class="modal__close" data-close-modal aria-label="Close">×</button></div>
+        <div class="modal__body share">
+          <div class="share__link"><input readonly value="${attr(url)}" aria-label="Link" data-link><button class="btn btn--sm" data-copy>Copy</button></div>
+          <div class="share__grid">
+            ${canNative ? `<button type="button" class="share__opt" data-native>${SHARE_ICONS.device}<span>Share…</span></button>` : ''}
+            <button type="button" class="share__opt" data-qr>${SHARE_ICONS.qr}<span>QR code</span></button>
+            ${card ? `<a class="share__opt" href="${attr(card)}" target="_blank" rel="noopener">${SHARE_ICONS.card}<span>Share card</span></a>` : ''}
+            <a class="share__opt" href="mailto:?subject=${enc(title)}&body=${enc(`${text}\n\n${url}`)}">${SHARE_ICONS.mail}<span>Email</span></a>
+            ${apps.map(([name, href]) => `<a class="share__opt" href="${attr(href)}" target="_blank" rel="noopener noreferrer"><b>${esc(name[0])}</b><span>${esc(name)}</span></a>`).join('')}
+          </div>
+          <div class="share__qr" data-qr-box hidden><img alt="QR code for ${attr(url)}" width="220" height="220"><p class="small muted">Scan to open on a phone. Right-click or long-press to save it for flyers and studio cards.</p></div>
+        </div>
+      </div>`, { small: true, onClose });
+    $('[data-copy]', modal).addEventListener('click', async () => { toast((await copyText(url)) ? 'Link copied' : 'Could not copy. Select the link and copy it.', 'ok'); });
+    $('[data-link]', modal).addEventListener('focus', (e) => e.target.select());
+    const native = $('[data-native]', modal);
+    if (native) native.addEventListener('click', async () => { try { await navigator.share({ title, text, url }); closeModal(); } catch { /* dismissed */ } });
+    $('[data-qr]', modal).addEventListener('click', () => {
+      const box = $('[data-qr-box]', modal);
+      box.hidden = !box.hidden;
+      if (!box.hidden) box.querySelector('img').src = `/api/share/qr.svg?url=${enc(path)}`;
+    });
+  }
+
+  function shareButton(opts, cls = 'btn btn--ghost btn--sm') {
+    return `<button type="button" class="${cls}" data-share='${attr(JSON.stringify(opts))}'>${SHARE_ICONS.share} Share</button>`;
+  }
+  function bindShare(root = main) {
+    $$('[data-share]', root).forEach((b) => b.addEventListener('click', () => shareSheet(JSON.parse(b.dataset.share))));
+  }
+
+  /* ---- boards (collections) ---- */
+
+  function boardCard(c, { owner = true } = {}) {
+    return `<a class="board" href="/c/${attr(c.token)}">
+      <div class="board__cover">${c.cover_url ? `<img src="${attr(c.cover_url)}" alt="" loading="lazy">` : `<span>${SHARE_ICONS.save}</span>`}</div>
+      <div class="board__body"><strong>${esc(c.title)}</strong><span class="small muted">${c.item_count} piece${c.item_count === 1 ? '' : 's'}${owner ? ` · ${c.is_public ? 'Shared by link' : 'Private'}` : ` · by ${esc(c.owner.name)}`}</span></div>
+    </a>`;
+  }
+
+  /** Save-to-board picker for an artwork. */
+  async function savePicker(artwork, onChange, onClose) {
+    if (!requireLogin()) { closeModal(); return; }
+    let boards;
+    try { ({ collections: boards } = await api.get('/api/collections', { artwork_id: artwork.id })); } catch (err) { return handleError(err); }
+    const modal = openModal(`
+      <div class="modal__panel">
+        <div class="modal__head"><div><h3 style="margin:0">Save to a board</h3><p class="small muted" style="margin:4px 0 0">${esc(artwork.title)}</p></div><button class="modal__close" data-close-modal aria-label="Close">×</button></div>
+        <div class="modal__body" data-boards></div>
+      </div>`, { small: true, onClose });
+    const box = $('[data-boards]', modal);
+    function render() {
+      box.innerHTML = `${boards.length ? `<div class="pick-list">${boards.map((c) => `
+        <label class="pick-row"><input type="checkbox" data-board="${c.id}" ${c.has_artwork ? 'checked' : ''}>
+          <span class="pick-row__cover">${c.cover_url ? `<img src="${attr(c.cover_url)}" alt="">` : ''}</span>
+          <span class="pick-row__text"><strong>${esc(c.title)}</strong><span class="small muted">${c.item_count} piece${c.item_count === 1 ? '' : 's'}${c.is_public ? ' · shared' : ''}</span></span>
+        </label>`).join('')}</div>` : '<p class="muted">No boards yet. Make one for this piece:</p>'}
+        <form class="row" data-new-board style="margin-top:12px"><input name="title" placeholder="New board, e.g. Sleeve ideas" required maxlength="80" style="flex:1"><button class="btn btn--sm">Create &amp; save</button></form>`;
+      $$('[data-board]', box).forEach((cb) => cb.addEventListener('change', async () => {
+        const id = cb.dataset.board;
+        try {
+          if (cb.checked) await api.post(`/api/collections/${id}/items`, { artwork_id: artwork.id }); else await api.del(`/api/collections/${id}/items/${artwork.id}`);
+          const b = boards.find((x) => String(x.id) === id); b.has_artwork = cb.checked; b.item_count += cb.checked ? 1 : -1;
+          toast(cb.checked ? `Saved to ${b.title}` : `Removed from ${b.title}`);
+          if (onChange) onChange(boards.some((x) => x.has_artwork));
+        } catch (err) { cb.checked = !cb.checked; handleError(err); }
+      }));
+      $('[data-new-board]', box).addEventListener('submit', async (e) => {
+        e.preventDefault();
+        try {
+          const r = await api.post('/api/collections', { title: e.target.title.value, artwork_id: artwork.id });
+          boards.unshift({ ...r.collection, has_artwork: true });
+          toast(`Saved to ${r.collection.title}`);
+          if (onChange) onChange(true);
+          render();
+        } catch (err) { handleError(err); }
+      });
+    }
+    render();
+  }
+
+  /** Pick one of my boards (used by messages and requests). */
+  async function boardPicker(onPick) {
+    let boards;
+    try { ({ collections: boards } = await api.get('/api/collections')); } catch (err) { return handleError(err); }
+    const modal = openModal(`
+      <div class="modal__panel">
+        <div class="modal__head"><h3 style="margin:0">Share a board</h3><button class="modal__close" data-close-modal aria-label="Close">×</button></div>
+        <div class="modal__body">${boards.length ? `<div class="pick-list">${boards.map((c) => `<button type="button" class="pick-row" data-pick="${c.id}"><span class="pick-row__cover">${c.cover_url ? `<img src="${attr(c.cover_url)}" alt="">` : ''}</span><span class="pick-row__text"><strong>${esc(c.title)}</strong><span class="small muted">${c.item_count} piece${c.item_count === 1 ? '' : 's'}</span></span></button>`).join('')}</div><p class="small faint" style="margin-top:10px">Sharing a board makes it viewable by anyone with its link.</p>` : '<p class="muted">You have no boards yet. Save tattoos you like from any artist page and they collect here.</p>'}</div>
+      </div>`, { small: true });
+    $$('[data-pick]', modal).forEach((b) => b.addEventListener('click', () => { const c = boards.find((x) => String(x.id) === b.dataset.pick); closeModal(); onPick(c); }));
+  }
+
+  async function viewCollections() {
+    if (!requireLogin('/collections')) return;
+    loading();
+    let boards;
+    try { ({ collections: boards } = await api.get('/api/collections')); } catch (e) { return handleError(e); }
+    main.innerHTML = `
+      <div class="page-head">
+        <div><h1>Your boards</h1><p class="muted">Tattoos you have saved, grouped the way you like. Share a board with an artist or attach it to a request.</p></div>
+        <button class="btn" data-new>New board</button>
+      </div>
+      ${boards.length ? `<div class="grid grid--3 boards">${boards.map((c) => boardCard(c)).join('')}</div>` : '<div class="empty"><h3>No boards yet</h3><p>Open any tattoo and choose <strong>Save</strong> to start one.</p><p><a class="btn btn--ghost btn--sm" href="/">Explore work</a></p></div>'}`;
+    $('[data-new]').addEventListener('click', () => {
+      const modal = openModal(`<div class="modal__panel"><div class="modal__head"><h3 style="margin:0">New board</h3><button class="modal__close" data-close-modal>×</button></div>
+        <form class="form modal__body" data-form><div class="error" hidden></div>
+          <div class="field"><label>Name</label><input name="title" placeholder="Sleeve ideas" required maxlength="80"></div>
+          <div class="field"><label>Notes (optional)</label><textarea name="description" placeholder="Placement, size, what you like about these..."></textarea></div>
+          <button class="btn btn--block">Create board</button></form></div>`, { small: true });
+      $('[data-form]', modal).addEventListener('submit', async (e) => {
+        e.preventDefault();
+        try { const r = await api.post('/api/collections', formData(e.target)); closeModal(); navigate(`/c/${r.collection.token}`); } catch (err) { handleError(err, $('.error', e.target)); }
+      });
+    });
+  }
+
+  async function viewCollection(token) {
+    loading();
+    let c;
+    try { ({ collection: c } = await api.get(`/api/collections/shared/${token}`)); } catch (e) { main.innerHTML = `<div class="empty"><h3>${e.status === 404 ? 'This board is private or no longer exists' : 'Could not load this board'}</h3><p>${state.user ? '' : '<a class="link" href="/login">Sign in</a> if it is yours.'}</p></div>`; return; }
+    const me = state.user;
+    const share = { title: c.title, text: `${c.title}: ${c.item_count} tattoo${c.item_count === 1 ? '' : 's'} saved on Inkwell`, path: `/c/${c.token}`, card: `/og/collections/${c.token}.png` };
+    const render = () => {
+      main.innerHTML = `
+        <div class="page-head">
+          <div>
+            ${c.is_owner ? '<a class="muted small" href="/collections">← Your boards</a>' : `<div class="row muted small">${avatar(c.owner.avatar_url, c.owner.name, 'avatar--xs')} ${esc(c.owner.name)}'s board</div>`}
+            <div class="row" style="margin-top:6px"><h1 style="margin:0">${esc(c.title)}</h1>${c.is_owner ? `<span class="pill ${c.is_public ? 'pill--open' : 'pill--closed'}">${c.is_public ? 'Shared' : 'Private'}</span>` : ''}</div>
+            ${c.description ? `<p class="muted" style="max-width:70ch">${esc(c.description)}</p>` : ''}
+            <p class="small muted">${c.item_count} piece${c.item_count === 1 ? '' : 's'}${c.artists.length ? ` · ${c.artists.map((a) => `<a class="link" href="/artists/${a.id}">${esc(a.name)}</a>`).join(', ')}` : ''}</p>
+          </div>
+          <div class="row">
+            ${c.is_owner ? `<button class="btn btn--ghost btn--sm" data-edit>Edit</button>${me.role === 'client' ? `<a class="btn btn--ghost btn--sm" href="/requests/new?board=${c.id}">Use in a request</a>` : ''}` : ''}
+            ${c.is_public || c.is_owner ? shareButton(share, 'btn btn--sm') : ''}
+          </div>
+        </div>
+        ${!c.is_public && c.is_owner ? '<div class="banner banner--soft">This board is private. Sharing it, or attaching it to a request, makes it viewable by anyone with the link.</div>' : ''}
+        ${c.items.length ? `<div class="grid-art">${c.items.map((a) => `
+          <article class="art" data-artwork="${a.id}">
+            <img src="${attr(a.thumb_url || a.image_url)}" alt="${attr(a.title)}" loading="lazy" ${a.width && a.height ? `width="${a.width}" height="${a.height}"` : ''}>
+            <div class="art__body">
+              <div class="art__title"><span>${esc(a.title)}</span>${c.is_owner ? `<button class="link small" data-remove="${a.id}" title="Remove from board">Remove</button>` : `<span class="art__likes">♥ ${a.like_count}</span>`}</div>
+              <div class="art__meta">${avatar(a.artist_avatar_url, a.artist_name, 'avatar--xs')}<span>${esc(a.artist_name)}</span>${a.style ? `<span class="tag">${esc(a.style)}</span>` : ''}</div>
+              ${a.note ? `<div class="small muted" style="margin-top:6px">${esc(a.note)}</div>` : ''}
+            </div>
+          </article>`).join('')}</div>` : `<div class="empty"><h3>Nothing saved yet</h3><p>${c.is_owner ? 'Open any tattoo and choose Save.' : 'This board is empty.'}</p></div>`}`;
+      bindShare();
+      $$('[data-remove]').forEach((b) => b.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        try { ({ collection: c } = await api.del(`/api/collections/${c.id}/items/${b.dataset.remove}`)); render(); } catch (err) { handleError(err); }
+      }));
+      const edit = $('[data-edit]');
+      if (edit) edit.addEventListener('click', () => {
+        const modal = openModal(`<div class="modal__panel"><div class="modal__head"><h3 style="margin:0">Edit board</h3><button class="modal__close" data-close-modal>×</button></div>
+          <form class="form modal__body" data-form><div class="error" hidden></div>
+            <div class="field"><label>Name</label><input name="title" value="${attr(c.title)}" required maxlength="80"></div>
+            <div class="field"><label>Notes</label><textarea name="description">${esc(c.description)}</textarea></div>
+            <label class="check"><input type="checkbox" name="is_public" ${c.is_public ? 'checked' : ''}> Anyone with the link can view this board</label>
+            <div class="row row--between" style="margin-top:8px"><button class="btn">Save</button><button type="button" class="btn btn--danger btn--sm" data-delete-board>Delete board</button></div>
+          </form></div>`, { small: true });
+        $('[data-form]', modal).addEventListener('submit', async (e) => {
+          e.preventDefault();
+          try { ({ collection: c } = await api.put(`/api/collections/${c.id}`, { title: e.target.title.value, description: e.target.description.value, is_public: e.target.is_public.checked })); closeModal(); render(); } catch (err) { handleError(err, $('.error', e.target)); }
+        });
+        $('[data-delete-board]', modal).addEventListener('click', async () => {
+          if (!confirm('Delete this board? The tattoos themselves are not affected.')) return;
+          try { await api.del(`/api/collections/${c.id}`); closeModal(); toast('Board deleted'); navigate('/collections'); } catch (err) { handleError(err); }
+        });
+      });
+    };
+    render();
+  }
+
+  /* ---- reviews ---- */
+
+  function reviewPhotosHtml(photos) {
+    if (!photos || !photos.length) return '';
+    return `<div class="review__photos">${photos.map((p) => `<a href="${attr(p.url)}" data-photo="${attr(p.url)}"><img src="${attr(p.thumb_url || p.url)}" alt="Client photo" loading="lazy"></a>`).join('')}</div>`;
+  }
+
+  function reviewCard(rv, { artistName, isArtistPage = true } = {}) {
+    const me = state.user;
+    const isMe = me && me.id === rv.artist_id;
+    const who = isArtistPage
+      ? `${avatar(rv.client_avatar_url, rv.client_name, 'avatar--sm')}<div><strong>${esc(rv.client_name)}</strong><div class="small muted">${stars(rv.rating)} · <span class="review__verified" title="Written after a session booked and completed on Inkwell">✓ Verified session</span> · ${fmtSlot(rv.starts_at).split(',').slice(0, 2).join(',')}</div></div>`
+      : `${avatar(rv.artist_avatar_url, rv.artist_name, 'avatar--sm')}<div><a href="/artists/${rv.artist_id}"><strong>${esc(rv.artist_name)}</strong></a><div class="small muted">${stars(rv.rating)} · session ${fmtSlot(rv.starts_at).split(',').slice(0, 2).join(',')}</div></div>`;
+    return `
+      <div class="card review" data-review="${rv.id}">
+        <div class="row row--between">
+          <div class="row">${who}</div>
+          <span class="faint small">${timeAgo(rv.created_at)}${rv.edited ? ' · edited' : ''}</span>
+        </div>
+        ${rv.body ? `<p style="margin:10px 0 0;white-space:pre-wrap">${esc(rv.body)}</p>` : ''}
+        ${reviewPhotosHtml(rv.photos)}
+        ${rv.artist_reply ? `<div class="review__reply"><strong class="small">Reply from ${esc((artistName || rv.artist_name || '').split(' ')[0])}</strong><p style="margin:4px 0 0">${esc(rv.artist_reply)}</p></div>` : ''}
+        <div class="row small review__actions">
+          ${me && me.id !== rv.client_id ? `<button class="link review__helpful ${rv.voted ? 'on' : ''}" data-helpful="${rv.id}">${rv.voted ? 'Helpful ✓' : 'Helpful'}${rv.helpful_count ? ` · ${rv.helpful_count}` : ''}</button>` : (rv.helpful_count ? `<span class="muted">${rv.helpful_count} found this helpful</span>` : '')}
+          ${isMe && !rv.artist_reply ? `<button class="link" data-reply="${rv.id}">Reply</button>` : ''}
+          ${rv.can_edit ? `<button class="link" data-edit-review="${rv.id}">Edit</button>` : ''}
+          ${me && (me.id === rv.client_id || me.is_admin) ? `<button class="link" data-del-review="${rv.id}">Delete</button>` : ''}
+          ${me && me.id !== rv.client_id && !isMe ? `<button class="link" data-report-review="${rv.id}">Report</button>` : ''}
+        </div>
+      </div>`;
+  }
+
+  function bindReviewCards(root, reviews, reload) {
+    $$('[data-photo]', root).forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); openPhoto(a.dataset.photo); }));
+    $$('[data-helpful]', root).forEach((b) => b.addEventListener('click', async () => {
+      try {
+        const r = await api.post(`/api/reviews/${b.dataset.helpful}/helpful`);
+        b.classList.toggle('on', r.voted);
+        b.textContent = `${r.voted ? 'Helpful ✓' : 'Helpful'}${r.helpful_count ? ` · ${r.helpful_count}` : ''}`;
+      } catch (err) { handleError(err); }
+    }));
+    $$('[data-report-review]', root).forEach((b) => b.addEventListener('click', () => reportModal('review', Number(b.dataset.reportReview), 'review')));
+    $$('[data-del-review]', root).forEach((b) => b.addEventListener('click', async () => {
+      if (!confirm('Delete this review?')) return;
+      try { await api.del(`/api/reviews/${b.dataset.delReview}`); toast('Review deleted'); reload(); } catch (err) { handleError(err); }
+    }));
+    $$('[data-edit-review]', root).forEach((b) => b.addEventListener('click', () => {
+      const rv = reviews.find((x) => String(x.id) === b.dataset.editReview);
+      if (rv) reviewModal({ review: rv }, reload);
+    }));
+    $$('[data-reply]', root).forEach((b) => b.addEventListener('click', () => {
+      const card = b.closest('[data-review]');
+      card.insertAdjacentHTML('beforeend', '<form class="row" data-reply-form style="margin-top:10px"><input name="body" placeholder="Thank them or add context" required style="flex:1;padding:9px 12px;border-radius:999px;border:1px solid var(--line-strong);background:var(--bg);color:var(--text)"><button class="btn btn--sm">Post reply</button></form>');
+      b.remove();
+      $('[data-reply-form]', card).addEventListener('submit', async (e) => {
+        e.preventDefault();
+        try { await api.post(`/api/reviews/${card.dataset.review}/reply`, { body: e.target.body.value }); reload(); } catch (err) { handleError(err); }
+      });
+    }));
+  }
+
+  function ratingBreakdown(summary) {
+    const rows = [['five', 5], ['four', 4], ['three', 3], ['two', 2], ['one', 1]];
+    const total = summary.review_count || 1;
+    return `<div class="rating-summary">
+      <div class="rating-summary__big"><strong>${summary.rating ?? '–'}</strong>${stars(summary.rating || 0)}<span class="small muted">${summary.review_count} review${summary.review_count === 1 ? '' : 's'}</span></div>
+      <div class="rating-summary__bars">${rows.map(([k, n]) => `<div class="rating-bar"><span>${n}★</span><i><b style="width:${Math.round((summary[k] / total) * 100)}%"></b></i><span class="muted">${summary[k]}</span></div>`).join('')}</div>
+      <div class="rating-summary__facts">${summary.recommend_pct !== null ? `<div><strong>${summary.recommend_pct}%</strong><span>rated 4 stars or more</span></div>` : ''}${summary.with_photos ? `<div><strong>${summary.with_photos}</strong><span>with photos</span></div>` : ''}</div>
+    </div>`;
+  }
+
+  /** Reviews section on an artist page with sort, client photos and paging. */
+  function reviewsSection(el, artist, initial, reload) {
+    let data = initial;
+    const SORTS_UI = [['newest', 'Newest'], ['highest', 'Highest'], ['lowest', 'Lowest'], ['photos', 'With photos'], ['helpful', 'Most helpful']];
+    async function load(sort, page = 1, append = false) {
+      try {
+        const r = await api.get(`/api/artists/${artist.id}/reviews`, { sort, page });
+        data = append ? { ...r, reviews: [...data.reviews, ...r.reviews] } : r;
+        render();
+      } catch (err) { handleError(err); }
+    }
+    function render() {
+      const s = data.summary;
+      el.innerHTML = `
+        <div class="section__head"><h2 id="reviews">Reviews</h2>${s.review_count ? `<span class="row" style="gap:8px">${shareButton({ title: `Reviews of ${artist.name}`, text: `${artist.name} is rated ${s.rating} out of 5 by ${s.review_count} client${s.review_count === 1 ? '' : 's'} on Inkwell`, path: `/artists/${artist.id}#reviews`, card: `/og/artists/${artist.id}.png` }, 'btn btn--subtle btn--sm')}</span>` : ''}</div>
+        ${s.review_count ? ratingBreakdown(s) : ''}
+        ${data.photos.length ? `<div class="client-photos"><div class="small muted" style="margin-bottom:8px">Client photos</div><div class="client-photos__strip">${data.photos.map((p) => `<a href="${attr(p.url)}" data-photo="${attr(p.url)}"><img src="${attr(p.thumb_url || p.url)}" alt="Client photo" loading="lazy"></a>`).join('')}</div></div>` : ''}
+        ${s.review_count > 1 ? `<div class="chips" style="margin:14px 0">${SORTS_UI.map(([k, label]) => `<button type="button" class="chip ${data.sort === k ? 'active' : ''}" data-sort="${k}">${label}</button>`).join('')}</div>` : ''}
+        ${data.reviews.length ? `<div class="stack">${data.reviews.map((rv) => reviewCard(rv, { artistName: artist.name })).join('')}</div>` : `<div class="empty"><p>${data.sort === 'photos' ? 'No reviews with photos yet.' : 'No reviews yet. Clients can review after a completed session.'}</p></div>`}
+        ${data.has_more ? '<div style="text-align:center;margin-top:14px"><button class="btn btn--ghost btn--sm" data-more-reviews>More reviews</button></div>' : ''}`;
+      bindShare(el);
+      $$('[data-photo]', el).forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); openPhoto(a.dataset.photo); }));
+      bindReviewCards(el, data.reviews, reload);
+      $$('[data-sort]', el).forEach((b) => b.addEventListener('click', () => load(b.dataset.sort)));
+      const more = $('[data-more-reviews]', el);
+      if (more) more.addEventListener('click', () => { more.disabled = true; load(data.sort, data.page + 1, true); });
+    }
+    render();
+  }
+
+  /** Post or edit a review, with up to three photos. */
+  function reviewModal({ appointmentId, review }, reload) {
+    let rating = review ? review.rating : 5;
+    let kept = review ? [...review.photos] : [];
+    let pending = [];
+    const modal = openModal(`
+      <div class="modal__panel">
+        <div class="modal__head"><div><h3 style="margin:0">${review ? 'Edit your review' : 'How was your session?'}</h3>${review ? '' : '<p class="small muted" style="margin:4px 0 0">Reviews are public and marked as a verified session.</p>'}</div><button class="modal__close" data-close-modal>×</button></div>
+        <form class="form modal__body" data-form>
+          <div class="error" hidden></div>
+          <div class="field"><span class="label">Rating</span><div class="star-picker" data-picker>${[1, 2, 3, 4, 5].map((i) => `<button type="button" data-star="${i}" class="${i <= rating ? 'on' : ''}" aria-label="${i} star${i === 1 ? '' : 's'}">★</button>`).join('')}</div></div>
+          <div class="field"><label>Tell others about it (optional)</label><textarea name="body" placeholder="How did the artist handle the design, the session, the healing advice?">${esc(review ? review.body : '')}</textarea></div>
+          <div class="field"><span class="label">Photos (optional, up to 3)</span><div class="review-photos" data-photos></div><label class="btn btn--ghost btn--sm" style="margin-top:8px"><input type="file" name="photos" accept="image/jpeg,image/png,image/webp" multiple hidden data-file>Add photos</label><span class="hint">Healed photos help other clients most.</span></div>
+          <button class="btn btn--block">${review ? 'Save changes' : 'Post review'}</button>
+        </form>
+      </div>`, { small: true });
+    const form = $('[data-form]', modal);
+    const photosEl = $('[data-photos]', form);
+    const fileInput = $('[data-file]', form);
+    const removed = [];
+    function renderPhotos() {
+      photosEl.innerHTML = [
+        ...kept.map((p) => `<span class="pending"><img src="${attr(p.thumb_url || p.url)}" alt=""><button type="button" data-drop="${attr(p.url)}" aria-label="Remove photo">×</button></span>`),
+        ...pending.map((f, i) => `<span class="pending"><img src="${attr(URL.createObjectURL(f))}" alt=""><span>${esc(f.name)}</span><button type="button" data-unpick="${i}" aria-label="Remove photo">×</button></span>`),
+      ].join('');
+      $$('[data-drop]', photosEl).forEach((b) => b.addEventListener('click', () => { removed.push(b.dataset.drop); kept = kept.filter((p) => p.url !== b.dataset.drop); renderPhotos(); }));
+      $$('[data-unpick]', photosEl).forEach((b) => b.addEventListener('click', () => { pending.splice(Number(b.dataset.unpick), 1); renderPhotos(); }));
+    }
+    renderPhotos();
+    fileInput.addEventListener('change', () => {
+      const room = 3 - kept.length - pending.length;
+      const files = Array.from(fileInput.files).slice(0, Math.max(0, room));
+      if (fileInput.files.length > room) toast('Up to 3 photos per review', 'error');
+      pending = [...pending, ...files]; fileInput.value = ''; renderPhotos();
+    });
+    $$('[data-star]', modal).forEach((b) => b.addEventListener('click', () => {
+      rating = Number(b.dataset.star);
+      $$('[data-star]', modal).forEach((x) => x.classList.toggle('on', Number(x.dataset.star) <= rating));
+    }));
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData();
+      fd.append('rating', rating);
+      fd.append('body', form.body.value);
+      pending.forEach((f) => fd.append('photos', f));
+      if (review) fd.append('remove_photos', JSON.stringify(removed));
+      form.querySelector('button.btn--block').disabled = true;
+      try {
+        if (review) await api.put(`/api/reviews/${review.id}`, fd); else await api.post(`/api/appointments/${appointmentId}/review`, fd);
+        closeModal(); toast(review ? 'Review updated' : 'Review posted'); reload();
+      } catch (err) { handleError(err, $('.error', form)); form.querySelector('button.btn--block').disabled = false; }
+    });
+  }
+
+  /** "Your reviews" block for the client dashboard: sessions waiting for a review, then past reviews. */
+  async function clientReviewsSection(el, reload) {
+    let data;
+    try { data = await api.get('/api/reviews/mine'); } catch { el.innerHTML = ''; return; }
+    if (!data.pending.length && !data.reviews.length) { el.innerHTML = ''; return; }
+    el.innerHTML = `
+      <div class="section__head"><h2>Your reviews</h2></div>
+      ${data.pending.length ? `<div class="stack" style="margin-bottom:14px">${data.pending.slice(0, 3).map((p) => `<div class="card review-prompt"><div class="row">${avatar(p.artist_avatar_url, p.artist_name, 'avatar--sm')}<div><strong>How was your session with ${esc(p.artist_name.split(' ')[0])}?</strong><div class="small muted">${fmtSlot(p.starts_at)}</div></div></div><button class="btn btn--sm" data-review-appt="${p.id}">Leave a review</button></div>`).join('')}${data.pending.length > 3 ? `<p class="small muted">${data.pending.length - 3} more session${data.pending.length - 3 === 1 ? '' : 's'} waiting for a review, under <a class="link" href="/appointments">Bookings</a>.</p>` : ''}</div>` : ''}
+      ${data.reviews.length ? `<div class="stack">${data.reviews.map((rv) => reviewCard(rv, { isArtistPage: false })).join('')}</div>` : ''}`;
+    $$('[data-review-appt]', el).forEach((b) => b.addEventListener('click', () => reviewModal({ appointmentId: b.dataset.reviewAppt }, reload)));
+    bindReviewCards(el, data.reviews, reload);
+  }
+
+  /** "Share your portfolio" card for the artist dashboard. */
+  function portfolioShareCard(artist) {
+    const path = `/artists/${artist.id}`;
+    const embed = `<iframe src="${absUrl(`/embed/artists/${artist.id}`)}" width="100%" height="420" style="border:0;border-radius:12px" loading="lazy" title="${attr(artist.name)} on Inkwell"></iframe>`;
+    return `<div class="card share-card">
+      <div class="share-card__main">
+        <h3>Share your portfolio</h3>
+        <p class="muted small">Your profile link comes with a share card, so it looks right in messages and on social. The QR code works on flyers and studio counters. The embed puts your latest work on your own website.</p>
+        <div class="share__link"><input readonly value="${attr(absUrl(path))}" aria-label="Profile link" data-link><button class="btn btn--sm" data-copy-profile>Copy</button></div>
+        <div class="row" style="margin-top:10px">${shareButton({ title: `${artist.name} on Inkwell`, text: `${artist.name}${artist.studio_name ? ` · ${artist.studio_name}` : ''}: galleries, reviews and booking on Inkwell`, path, card: `/og/artists/${artist.id}.png` }, 'btn btn--sm')}<a class="btn btn--ghost btn--sm" href="/og/artists/${artist.id}.png" target="_blank" rel="noopener">Share card</a><a class="btn btn--ghost btn--sm" href="/embed/artists/${artist.id}" target="_blank" rel="noopener">Preview embed</a></div>
+        <details style="margin-top:12px"><summary class="link small">Embed code for your website</summary><textarea readonly class="share-card__code" rows="3" aria-label="Embed code" data-embed>${esc(embed)}</textarea><div class="small faint" style="margin-top:4px">Add <code>?theme=light</code> or <code>&amp;limit=9</code> to the iframe address to match your site.</div></details>
+      </div>
+      <div class="share-card__qr"><img src="/api/share/qr.svg?url=${encodeURIComponent(path)}" alt="QR code for your profile" width="150" height="150"><span class="small muted">Scan to open your profile</span></div>
+    </div>`;
   }
 
   /* ---------- messages ---------- */
@@ -1286,6 +1651,7 @@
   function attachmentHtml(a) {
     if (a.type === 'image') return `<a class="bubble__photo" href="${attr(a.url)}" data-photo="${attr(a.url)}"><img src="${attr(a.thumb_url || a.url)}" alt="Photo" loading="lazy" ${a.width && a.height ? `style="aspect-ratio:${a.width}/${a.height}"` : ''}></a>`;
     if (a.type === 'artwork') return `<a class="bubble__art" href="/artworks/${a.id}"><img src="${attr(a.thumb_url)}" alt="" loading="lazy"><span><strong>${esc(a.title || 'Tattoo')}</strong><small>${esc(a.style || '')}</small></span></a>`;
+    if (a.type === 'collection') return `<a class="bubble__art" href="/c/${attr(a.token)}">${a.thumb_url ? `<img src="${attr(a.thumb_url)}" alt="" loading="lazy">` : `<span class="bubble__art-icon">${SHARE_ICONS.save}</span>`}<span><strong>${esc(a.title || 'Board')}</strong><small>Reference board · ${a.item_count || 0} piece${a.item_count === 1 ? '' : 's'}</small></span></a>`;
     return '';
   }
 
@@ -1568,7 +1934,7 @@
         <div class="compose__pending" data-pending hidden></div>
         <div class="compose__row">
           <label class="compose__tool" title="Attach a photo"><input type="file" name="image" accept="image/jpeg,image/png,image/webp,image/gif" hidden data-file>${MSG_ICONS.photo}<span class="sr-only">Attach a photo</span></label>
-          ${me.role === 'artist' ? `<button type="button" class="compose__tool" title="Share a tattoo from your galleries" data-share-art>${MSG_ICONS.art}<span class="sr-only">Share a tattoo</span></button><button type="button" class="compose__tool" title="Insert a saved reply" data-insert-reply>${MSG_ICONS.reply}<span class="sr-only">Saved replies</span></button>` : ''}
+          ${me.role === 'artist' ? `<button type="button" class="compose__tool" title="Share a tattoo from your galleries" data-share-art>${MSG_ICONS.art}<span class="sr-only">Share a tattoo</span></button><button type="button" class="compose__tool" title="Insert a saved reply" data-insert-reply>${MSG_ICONS.reply}<span class="sr-only">Saved replies</span></button>` : `<button type="button" class="compose__tool" title="Share one of your boards" data-share-board>${SHARE_ICONS.save}<span class="sr-only">Share a board</span></button>`}
           <textarea name="body" rows="1" placeholder="Message" aria-label="Message">${esc(readDraft(thread.other.id))}</textarea>
           <button class="btn compose__send" aria-label="Send">${MSG_ICONS.send}</button>
         </div>
@@ -1648,6 +2014,7 @@
       const pendingEl = $('[data-pending]', form);
       let pendingFile = null;
       let pendingArt = null;
+      let pendingBoard = null;
       const autosize = () => { textarea.style.height = 'auto'; textarea.style.height = `${Math.min(160, textarea.scrollHeight)}px`; };
       autosize();
       textarea.addEventListener('input', () => { autosize(); writeDraft(thread.other.id, textarea.value); });
@@ -1656,21 +2023,25 @@
         const bits = [];
         if (pendingFile) bits.push(`<span class="pending"><img src="${attr(URL.createObjectURL(pendingFile))}" alt=""><span>${esc(pendingFile.name)}</span><button type="button" data-clear-file aria-label="Remove photo">×</button></span>`);
         if (pendingArt) bits.push(`<span class="pending"><img src="${attr(pendingArt.thumb_url || pendingArt.image_url)}" alt=""><span>${esc(pendingArt.title)}</span><button type="button" data-clear-art aria-label="Remove tattoo">×</button></span>`);
+        if (pendingBoard) bits.push(`<span class="pending">${pendingBoard.cover_url ? `<img src="${attr(pendingBoard.cover_url)}" alt="">` : ''}<span>Board: ${esc(pendingBoard.title)}</span><button type="button" data-clear-board aria-label="Remove board">×</button></span>`);
         pendingEl.innerHTML = bits.join('');
         pendingEl.hidden = !bits.length;
         const cf = $('[data-clear-file]', pendingEl); if (cf) cf.addEventListener('click', () => { pendingFile = null; fileInput.value = ''; renderPending(); });
         const ca = $('[data-clear-art]', pendingEl); if (ca) ca.addEventListener('click', () => { pendingArt = null; renderPending(); });
+        const cb = $('[data-clear-board]', pendingEl); if (cb) cb.addEventListener('click', () => { pendingBoard = null; renderPending(); });
       }
       fileInput.addEventListener('change', () => { pendingFile = fileInput.files[0] || null; renderPending(); textarea.focus(); });
       const share = $('[data-share-art]', form);
       if (share) share.addEventListener('click', () => openArtworkPicker((a) => { pendingArt = a; renderPending(); textarea.focus(); }));
+      const shareBoard = $('[data-share-board]', form);
+      if (shareBoard) shareBoard.addEventListener('click', () => boardPicker((c) => { pendingBoard = c; renderPending(); textarea.focus(); }));
       const insert = $('[data-insert-reply]', form);
       if (insert) insert.addEventListener('click', () => openSavedReplies({ other: thread.other, onInsert: (text) => { textarea.value = textarea.value ? `${textarea.value.replace(/\s+$/, '')}\n${text}` : text; autosize(); writeDraft(thread.other.id, textarea.value); textarea.focus(); } }));
 
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
         const text = textarea.value.trim();
-        if (!text && !pendingFile && !pendingArt) return;
+        if (!text && !pendingFile && !pendingArt && !pendingBoard) return;
         const send = $('.compose__send', form);
         send.disabled = true;
         try {
@@ -1680,12 +2051,13 @@
             fd.append('body', text);
             fd.append('image', pendingFile);
             if (pendingArt) fd.append('artwork_id', pendingArt.id);
+            if (pendingBoard) fd.append('collection_id', pendingBoard.id);
             r = await api.post(`/api/messages/${thread.other.id}`, fd);
           } else {
-            r = await api.post(`/api/messages/${thread.other.id}`, { body: text, artwork_id: pendingArt ? pendingArt.id : undefined });
+            r = await api.post(`/api/messages/${thread.other.id}`, { body: text, artwork_id: pendingArt ? pendingArt.id : undefined, collection_id: pendingBoard ? pendingBoard.id : undefined });
           }
           textarea.value = ''; autosize(); writeDraft(thread.other.id, '');
-          pendingFile = null; pendingArt = null; fileInput.value = ''; renderPending();
+          pendingFile = null; pendingArt = null; pendingBoard = null; fileInput.value = ''; renderPending();
           if (!thread.messages.some((m) => m.id === r.message.id)) thread.messages.push(r.message);
           if (thread.state.archived) thread.state.archived = false;
           renderThreadBody(true); refreshList();
@@ -1741,6 +2113,7 @@
         <div class="kpi"><strong>${proposals.length}</strong><span>proposals sent</span></div>
         <div class="kpi"><strong>${money(pay.summary.collected)}</strong><span>collected${pay.summary.outstanding ? ` · ${money(pay.summary.outstanding)} due` : ''}</span></div>
       </div>
+      ${portfolioShareCard(artist)}
       <div class="tabs" style="margin-top:24px">
         <button data-tab="galleries" class="${tab === 'galleries' ? 'active' : ''}">Galleries</button>
         <button data-tab="availability" class="${tab === 'availability' ? 'active' : ''}">Availability</button>
@@ -1753,6 +2126,11 @@
 
     const panel = $('[data-panel]');
     const renderTab = (name) => {
+    bindShare();
+    const copyProfile = $('[data-copy-profile]');
+    if (copyProfile) copyProfile.addEventListener('click', async () => { toast((await copyText(absUrl(`/artists/${me.id}`))) ? 'Profile link copied' : 'Could not copy'); });
+    const embedCode = $('[data-embed]');
+    if (embedCode) embedCode.addEventListener('focus', (e) => e.target.select());
       $$('[data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
       if (name === 'galleries') {
         panel.innerHTML = `
@@ -1857,11 +2235,19 @@
         <div class="section__head"><h2>Your requests</h2></div>
         ${requests.length ? `<div class="grid grid--2">${requests.map(requestCard).join('')}</div>` : '<div class="empty"><h3>No requests yet</h3><p>Describe what you want and let artists send proposals.</p></div>'}
       </section>
+      <section class="section" data-client-reviews></section>
+      <section class="section" data-boards><div class="section__head"><h2>Your boards</h2><a class="link" href="/collections">All boards</a></div><div class="loading">Loading</div></section>
       <section class="section">
         <div class="section__head"><h2>Payments</h2></div>
         ${paymentsTable(pay.payments)}
       </section>`;
     bindApptActions(main, viewClientDashboard);
+    clientReviewsSection($('[data-client-reviews]'), viewClientDashboard);
+    api.get('/api/collections').then(({ collections }) => {
+      const el = $('[data-boards]');
+      if (!el) return;
+      el.innerHTML = `<div class="section__head"><h2>Your boards</h2><a class="link" href="/collections">${collections.length ? 'All boards' : 'New board'}</a></div>${collections.length ? `<div class="grid grid--3 boards">${collections.slice(0, 3).map((c) => boardCard(c)).join('')}</div>` : '<div class="empty"><p>Save tattoos you like into boards, then share a board with an artist or attach it to a request.</p></div>'}`;
+    }).catch(() => {});
   }
 
   /* ---------- settings ---------- */
@@ -2490,11 +2876,13 @@
     [/^\/artists$/, (m, p) => viewArtists(p)],
     [/^\/artists\/(\d+)$/, (m) => viewArtist(m[1])],
     [/^\/galleries\/(\d+)$/, (m) => viewGallery(m[1])],
+    [/^\/collections$/, () => viewCollections()],
+    [/^\/c\/([A-Za-z0-9_-]+)$/, (m) => viewCollection(m[1])],
     [/^\/requests$/, (m, p) => viewRequests(p)],
-    [/^\/requests\/new$/, () => viewNewRequest()],
+    [/^\/requests\/new$/, (_m, params) => viewNewRequest(params)],
     [/^\/requests\/(\d+)$/, (m) => viewRequest(m[1])],
     [/^\/book\/(\d+)$/, (m, p) => viewBook(m[1], p)],
-    [/^\/appointments$/, () => viewAppointments()],
+    [/^\/appointments$/, (_m, params) => viewAppointments(params)],
     [/^\/messages$/, (_m, params) => viewMessages(null, params)],
     [/^\/messages\/(\d+)$/, (m, params) => viewMessages(m[1], params)],
     [/^\/dashboard$/, (m, p) => viewDashboard(p)],
@@ -2515,7 +2903,7 @@
     if (!state.ready) return;
     cleanupFns.forEach((fn) => fn());
     cleanupFns = [];
-    closeModal();
+    closeModal({ silent: true });
     if (window.charts) charts.hideTip();
     renderBanner();
     const path = location.pathname.replace(/\/+$/, '') || '/';

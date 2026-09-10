@@ -241,6 +241,14 @@ const templates = {
       cta: { label: 'See your reviews', url: `${APP_URL}/artists/${artistId}` },
     };
   },
+  reviewReminder(appt, clientId) {
+    return {
+      to: clientId, subject: `How was your session with ${appt.artist_name}?`,
+      title: `How did it go with ${appt.artist_name.split(' ')[0]}?`,
+      paragraphs: [`Your session on ${fmtWhen(appt.starts_at)} is done. A short review helps ${appt.artist_name.split(' ')[0]} and helps other people find the right artist. Healed photos are welcome too.`],
+      cta: { label: 'Leave a review', url: `${APP_URL}/appointments?review=${appt.id}` },
+    };
+  },
   newMessage(sender, recipientId, body) {
     return {
       to: recipientId, subject: `New message from ${sender.name}`,

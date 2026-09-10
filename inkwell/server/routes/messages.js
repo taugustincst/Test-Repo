@@ -75,6 +75,12 @@ const isBlocked = db.prepare('SELECT 1 FROM blocks WHERE blocker_id = ? AND bloc
 const insertBlock = db.prepare('INSERT OR IGNORE INTO blocks (blocker_id, blocked_id) VALUES (?, ?)');
 const deleteBlock = db.prepare('DELETE FROM blocks WHERE blocker_id = ? AND blocked_id = ?');
 const artworkForShare = db.prepare('SELECT id, title, image_url, thumb_url, style FROM artworks WHERE id = ? AND artist_id = ?');
+const collectionForShare = db.prepare(`
+  SELECT c.id, c.title, c.token, (SELECT COUNT(*) FROM collection_items ci WHERE ci.collection_id = c.id) AS item_count,
+         (SELECT COALESCE(a.thumb_url, a.image_url) FROM collection_items ci JOIN artworks a ON a.id = ci.artwork_id WHERE ci.collection_id = c.id ORDER BY ci.created_at DESC LIMIT 1) AS cover_url
+  FROM collections c WHERE c.id = ? AND c.user_id = ?
+`);
+const publishCollection = db.prepare(`UPDATE collections SET is_public = 1, updated_at = datetime('now') WHERE id = ?`);
 const listReplies = db.prepare('SELECT id, title, body, created_at FROM saved_replies WHERE user_id = ? ORDER BY created_at ASC, id ASC');
 const countReplies = db.prepare('SELECT COUNT(*) AS n FROM saved_replies WHERE user_id = ?');
 const insertReply = db.prepare('INSERT INTO saved_replies (user_id, title, body) VALUES (?, ?, ?)');
@@ -294,6 +300,13 @@ router.post('/:userId', upload.single('image'), async (req, res) => {
     const art = artworkForShare.get(artworkId, req.user.id);
     if (!art) { cleanup(); return res.status(404).json({ error: 'That tattoo is not in your galleries.' }); }
     attachments.push({ type: 'artwork', id: art.id, title: art.title, style: art.style, thumb_url: art.thumb_url || art.image_url });
+  }
+  const collectionId = Number((req.body || {}).collection_id);
+  if (collectionId) {
+    const board = collectionForShare.get(collectionId, req.user.id);
+    if (!board) { cleanup(); return res.status(404).json({ error: 'That board is not yours or no longer exists.' }); }
+    publishCollection.run(board.id); // sharing by message makes the board viewable by link
+    attachments.push({ type: 'collection', id: board.id, token: board.token, title: board.title, item_count: board.item_count, thumb_url: board.cover_url });
   }
   if (!body && !attachments.length) return res.status(400).json({ error: 'Write a message first.' });
 

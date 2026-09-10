@@ -33,6 +33,14 @@ function securityHeaders(req, res, next) {
   next();
 }
 
+/** The embeddable portfolio widget may be framed by any site; everything else stays un-frameable. */
+function embedHeaders(_req, res, next) {
+  res.removeHeader('X-Frame-Options');
+  res.setHeader('Content-Security-Policy', CSP.replace("frame-ancestors 'none'", 'frame-ancestors *'));
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  next();
+}
+
 /** Uploads are user content: never let them run as documents. */
 function uploadHeaders(_req, res, next) {
   res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
@@ -125,4 +133,4 @@ function requestLogger() {
   };
 }
 
-module.exports = { securityHeaders, uploadHeaders, rateLimit, originCheck, cors, requestLogger, CSP };
+module.exports = { securityHeaders, uploadHeaders, rateLimit, originCheck, cors, requestLogger, CSP, embedHeaders };
