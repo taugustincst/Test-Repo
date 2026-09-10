@@ -6,6 +6,7 @@ const { requireAuth, requireRole } = require('../auth');
 const ledger = require('../ledger');
 const mailer = require('../mailer');
 const analytics = require('../analytics');
+const calendar = require('../calendar');
 
 const router = express.Router();
 
@@ -37,7 +38,7 @@ const APPT_SELECT = `
   SELECT ap.*,
          a.name AS artist_name, a.avatar_url AS artist_avatar_url,
          c.name AS client_name, c.avatar_url AS client_avatar_url,
-         p.studio_name, r.title AS request_title,
+         p.studio_name, a.location AS artist_location, r.title AS request_title,
          (SELECT rv.id FROM reviews rv WHERE rv.appointment_id = ap.id) AS review_id
   FROM appointments ap
   JOIN users a ON a.id = ap.artist_id
@@ -94,7 +95,8 @@ function slotsFor(artist, date) {
       if (slots.has(startsAt)) continue; // overlapping windows share slots
       const endsAt = `${date}T${fromMinutes(start + length)}`;
       const taken = busy.some((b) => b.starts_at < endsAt && b.ends_at > startsAt);
-      slots.set(startsAt, { starts_at: startsAt, ends_at: endsAt, available: !taken && startsAt > now });
+      const external = calendar.busyBetween.get(artist.id, endsAt, startsAt);
+      slots.set(startsAt, { starts_at: startsAt, ends_at: endsAt, available: !taken && !external && startsAt > now, busy: !!external });
     }
   }
   return Array.from(slots.values()).sort((a, b) => (a.starts_at < b.starts_at ? -1 : 1));
@@ -144,7 +146,17 @@ router.get('/artists/:id/slots', (req, res) => {
 
 router.get('/appointments', requireAuth, (req, res) => {
   const list = ledger.attachPayments(appointmentsForUser.all(req.user.id, req.user.id));
-  res.json({ appointments: list });
+  list.forEach((a) => { a.calendar = ['pending', 'confirmed'].includes(a.status) ? calendar.links(a, req.user.id) : null; });
+  res.json({ appointments: list, timezone: calendar.TIMEZONE });
+});
+
+/** One appointment as an .ics file, for the parties involved. */
+router.get('/appointments/:id/calendar.ics', requireAuth, (req, res) => {
+  const appt = getAppointment.get(req.params.id);
+  if (!appt) return res.status(404).json({ error: 'Appointment not found.' });
+  if (appt.artist_id !== req.user.id && appt.client_id !== req.user.id) return res.status(403).json({ error: 'This is not your appointment.' });
+  res.set({ 'Content-Type': 'text/calendar; charset=utf-8', 'Content-Disposition': `attachment; filename="inkwell-session-${appt.id}.ics"`, 'Cache-Control': 'private, no-cache' });
+  res.send(calendar.eventFile(appt, req.user.id));
 });
 
 router.get('/appointments/:id', requireAuth, (req, res) => {
@@ -164,9 +176,13 @@ router.post('/appointments', requireRole('client'), (req, res) => {
   const date = startsAt.slice(0, 10);
   const slot = slotsFor(artist, date).find((s) => s.starts_at === startsAt);
   if (!slot) return res.status(400).json({ error: 'That time is outside the artist\'s hours.' });
+  if (slot.busy) return res.status(409).json({ error: 'The artist is busy then. Pick another slot.' });
   if (!slot.available) return res.status(409).json({ error: 'That slot has already been taken. Pick another one.' });
   if (overlapping.get(artist.id, slot.ends_at, slot.starts_at).n > 0) {
     return res.status(409).json({ error: 'That slot has already been taken. Pick another one.' });
+  }
+  if (calendar.busyBetween.get(artist.id, slot.ends_at, slot.starts_at)) {
+    return res.status(409).json({ error: 'The artist is busy then. Pick another slot.' });
   }
 
   let requestId = null;
@@ -239,7 +255,7 @@ router.post('/appointments/:id/:action', requireAuth, async (req, res) => {
   const updated = getAppointment.get(appt.id);
   await ledger.settle(updated, action, actorRole);
   const recipient = isArtist ? updated.client_id : updated.artist_id;
-  mailer.notify({ to: recipient, ...mailer.templates.bookingStatus(updated, action, req.user.name) });
+  mailer.notify({ to: recipient, ...mailer.templates.bookingStatus(updated, action, req.user.name, action === 'confirm' ? calendar.links(updated, recipient) : null) });
   res.json({ appointment: ledger.attachPayments([updated])[0] });
 });
 

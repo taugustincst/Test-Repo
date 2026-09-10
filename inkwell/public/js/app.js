@@ -1022,7 +1022,7 @@
           const next = buttons.slice(idx + 1).find((b) => !b.disabled);
           if (next) { next.click(); return; }
         }
-        slotsEl.innerHTML = r.slots.length ? r.slots.map((s) => `<button type="button" class="slot" data-slot="${attr(s.starts_at)}" ${s.available ? '' : 'disabled'}>${fmtTime(s.starts_at)}</button>`).join('') : '<p class="faint">No sessions on this day.</p>';
+        slotsEl.innerHTML = r.slots.length ? r.slots.map((s) => `<button type="button" class="slot ${s.busy ? 'slot--busy' : ''}" data-slot="${attr(s.starts_at)}" ${s.available ? '' : 'disabled'} ${s.busy ? 'title="The artist is busy then"' : ''}>${fmtTime(s.starts_at)}</button>`).join('') : '<p class="faint">No sessions on this day.</p>';
         autoAdvancing = false;
         $$('[data-slot]').forEach((b) => b.addEventListener('click', () => {
           $$('[data-slot]').forEach((x) => x.classList.toggle('active', x === b));
@@ -1064,6 +1064,7 @@
     if (!isArtist && a.status === 'completed' && !a.review_id) actions.push(`<button class="btn btn--sm btn--subtle" data-review-appt="${a.id}">Leave a review</button>`);
     if (!isArtist && a.review_id) actions.push(`<a class="btn btn--ghost btn--sm" href="/artists/${a.artist_id}">See your review</a>`);
     actions.push(`<a class="btn btn--ghost btn--sm" href="/messages/${other.id}">Message</a>`);
+    if (a.calendar) actions.push(`<details class="menu"><summary class="btn btn--ghost btn--sm">Add to calendar</summary><div class="menu__list"><a class="menu__item" href="${attr(a.calendar.google)}" target="_blank" rel="noopener">Google Calendar</a><a class="menu__item" href="${attr(a.calendar.outlook)}" target="_blank" rel="noopener">Outlook.com</a><a class="menu__item" href="${attr(a.calendar.ics)}" download rel="external">Apple / other (.ics)</a><a class="menu__item" href="/settings#calendar">Subscribe to all sessions</a></div></details>`);
     if (!isArtist && ['pending', 'confirmed', 'completed'].includes(a.status)) {
       (a.payments || []).filter((p) => p.status === 'pending').forEach((p) => actions.unshift(
         `<button class="btn btn--sm" data-pay="${p.id}" data-amount="${p.amount}" data-kind="${p.kind}">Pay ${money(p.amount)} ${p.kind}</button>`,
@@ -1219,6 +1220,54 @@
       history.replaceState({}, '', '/appointments');
       if (appt && appt.status === 'completed' && !appt.review_id) reviewModal({ appointmentId: appt.id }, () => viewAppointments());
     }
+  }
+
+  /* ---------- calendar sync ---------- */
+
+  async function renderCalendarCard(box) {
+    if (!box) return;
+    let cal;
+    try { cal = await api.get('/api/calendar'); } catch (err) { box.innerHTML = ''; return; }
+    const u = state.user;
+    const busy = cal.busy;
+    const syncedLine = (b) => (b.error ? `<span style="color:var(--accent)">Could not read it: ${esc(b.error)}</span>` : (b.synced_at ? `${b.count} busy block${b.count === 1 ? '' : 's'} imported, checked ${timeAgo(b.synced_at)}. Refreshes every 30 minutes.` : 'Not checked yet.'));
+    box.innerHTML = `
+      <h3>Calendar</h3>
+      <p class="small muted">Subscribe once and every ${u.role === 'artist' ? 'session' : 'booking'} shows up in your own calendar, with changes and cancellations. Times are in ${esc(cal.timezone)}. Anyone with this link can read your sessions, so keep it to yourself.</p>
+      <div class="share__link"><input readonly value="${attr(cal.feed.https)}" aria-label="Calendar feed link" data-feed-link><button class="btn btn--sm" data-copy-feed>Copy</button></div>
+      <div class="row" style="margin-top:10px">
+        <a class="btn btn--ghost btn--sm" href="${attr(cal.feed.google)}" target="_blank" rel="noopener">Add to Google Calendar</a>
+        <a class="btn btn--ghost btn--sm" href="${attr(cal.feed.webcal)}">Apple Calendar / Outlook</a>
+        <button type="button" class="link small" data-reset-feed>Reset link</button>
+      </div>
+      ${busy ? `
+        <hr class="divider" style="margin:16px 0">
+        <h3 style="font-size:1rem">Block time from another calendar</h3>
+        <p class="small muted">Paste the private iCal address of your personal or studio calendar (Google: calendar settings → "Secret address in iCal format"). Its events are treated as busy, so clients cannot book over them. Repeating events are not expanded.</p>
+        <form class="share__link" data-busy-form><input name="url" placeholder="https://calendar.google.com/calendar/ical/…/basic.ics" value="${attr(busy.url)}" aria-label="Busy calendar address"><button class="btn btn--sm">${busy.url ? 'Update' : 'Connect'}</button></form>
+        <div class="small muted" style="margin-top:8px" data-busy-status>${busy.url ? syncedLine(busy) : 'No calendar connected.'}</div>
+        ${busy.url ? '<div class="row" style="margin-top:8px"><button type="button" class="btn btn--ghost btn--sm" data-busy-sync>Check now</button><button type="button" class="link small" data-busy-remove>Disconnect</button></div>' : ''}` : ''}`;
+    $('[data-copy-feed]', box).addEventListener('click', async () => { toast((await copyText(cal.feed.https)) ? 'Calendar link copied' : 'Could not copy'); });
+    $('[data-feed-link]', box).addEventListener('focus', (e) => e.target.select());
+    $('[data-reset-feed]', box).addEventListener('click', async () => {
+      if (!confirm('Reset the calendar link? Calendars subscribed with the old link will stop updating.')) return;
+      try { await api.post('/api/calendar/reset'); toast('New calendar link created'); renderCalendarCard(box); } catch (err) { handleError(err); }
+    });
+    const busyForm = $('[data-busy-form]', box);
+    if (busyForm) busyForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = busyForm.querySelector('button'); btn.disabled = true;
+      try { await api.put('/api/calendar/busy', { url: busyForm.url.value }); toast('Calendar connected'); renderCalendarCard(box); } catch (err) { handleError(err); btn.disabled = false; if (err.data && err.data.busy) $('[data-busy-status]', box).innerHTML = syncedLine(err.data.busy); }
+    });
+    const sync = $('[data-busy-sync]', box);
+    if (sync) sync.addEventListener('click', async () => {
+      sync.disabled = true;
+      try { const r = await api.post('/api/calendar/busy/sync'); $('[data-busy-status]', box).innerHTML = syncedLine(r.busy); toast('Calendar checked'); } catch (err) { handleError(err); if (err.data && err.data.busy) $('[data-busy-status]', box).innerHTML = syncedLine(err.data.busy); } finally { sync.disabled = false; }
+    });
+    const remove = $('[data-busy-remove]', box);
+    if (remove) remove.addEventListener('click', async () => {
+      try { await api.del('/api/calendar/busy'); toast('Calendar disconnected'); renderCalendarCard(box); } catch (err) { handleError(err); }
+    });
   }
 
   /* ---------- sharing, boards and reviews ---------- */
@@ -2270,6 +2319,7 @@
           </div>
           <div class="field"><label>Bio</label><textarea name="bio" placeholder="${u.role === 'artist' ? 'Your style, your studio, what you love to tattoo.' : 'A little about you and what you collect.'}">${esc(u.bio || '')}</textarea></div>
           <label class="check"><input type="checkbox" name="email_notifications" ${u.email_notifications !== false ? 'checked' : ''}> Email me about bookings, proposals, payments and messages</label>
+          <label class="check"><input type="checkbox" name="session_reminders" ${u.session_reminders !== false ? 'checked' : ''}> Remind me the day before and two hours before a session</label>
           ${u.role === 'artist' ? `
             <hr class="divider" style="margin:6px 0">
             <h3>Studio</h3>
@@ -2308,6 +2358,7 @@
           <div class="loading">Loading</div>
         </div>
         <div class="card" style="margin-top:14px" data-push-card><div class="loading">Loading</div></div>
+        <div class="card" style="margin-top:14px" id="calendar" data-calendar-card><div class="loading">Loading</div></div>
         <div class="card" style="margin-top:14px">
           <h3>Your account</h3>
           <div class="list-item"><div><strong>Download your data</strong><div class="small muted">Everything we hold about you, as a JSON file.</div></div><a class="btn btn--ghost btn--sm" href="/api/auth/me/export" download rel="external">Export</a></div>
@@ -2316,6 +2367,7 @@
         </div>
       </div>`;
     renderPushCard($('[data-push-card]'));
+    renderCalendarCard($('[data-calendar-card]'));
     $('[data-logout-all]').addEventListener('click', async () => {
       if (!confirm('Sign out of every device?')) return;
       try { await api.post('/api/auth/logout-all'); state.user = null; renderNav(); navigate('/'); } catch (err) { handleError(err); }
@@ -2362,6 +2414,7 @@
       e.preventDefault();
       const data = formData(form);
       data.email_notifications = form.email_notifications.checked;
+      data.session_reminders = form.session_reminders.checked;
       if (u.role === 'artist') {
         data.styles = $$('input[name="styles"]:checked').map((i) => i.value);
         data.accepting_clients = form.accepting_clients.checked;

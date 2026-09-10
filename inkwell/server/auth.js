@@ -8,7 +8,7 @@ const COOKIE_NAME = 'inkwell_session';
 const SESSION_DAYS = 30;
 
 const getUserByToken = db.prepare(`
-  SELECT u.id, u.email, u.name, u.role, u.avatar_url, u.bio, u.location, u.email_notifications, u.push_notifications,
+  SELECT u.id, u.email, u.name, u.role, u.avatar_url, u.bio, u.location, u.email_notifications, u.push_notifications, u.session_reminders,
          u.is_admin, u.suspended_at, u.suspended_reason, u.created_at
   FROM sessions s JOIN users u ON u.id = s.user_id
   WHERE s.token = ? AND s.created_at > datetime('now', ?)
@@ -22,6 +22,7 @@ function withProfile(user) {
   if (!user) return user;
   user.email_notifications = user.email_notifications !== 0;
   user.push_notifications = user.push_notifications !== 0;
+  user.session_reminders = user.session_reminders !== 0;
   user.is_admin = user.is_admin === 1 || user.is_admin === true;
   user.suspended = !!user.suspended_at;
   if (user.role === 'artist') {

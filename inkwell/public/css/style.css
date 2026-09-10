@@ -600,3 +600,7 @@ a.ctx__item:hover { border-color: var(--line-strong); }
 .review-photos { display: flex; gap: 8px; flex-wrap: wrap; }
 .review-photos:empty { display: none; }
 .review > .row--between > .row { flex-wrap: nowrap; min-width: 0; }
+.slot--busy[disabled] { text-decoration: line-through; opacity: 0.5; }
+.appt__actions .menu summary { list-style: none; }
+.appt__actions .menu__list { min-width: 220px; }
+.appt__actions .menu__item { display: block; text-decoration: none; }

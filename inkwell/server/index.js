@@ -161,6 +161,9 @@ function createApp(options = {}) {
   app.use('/api/requests', require('./routes/requests'));
   app.use('/api/messages', require('./routes/messages'));
   app.use('/api/collections', require('./routes/collections'));
+  const calendarRoutes = require('./routes/calendar');
+  app.use('/api/calendar', calendarRoutes.api);
+  app.use(calendarRoutes.pub); // /calendar/:token.ics
   app.use(require('./routes/share')); // /og/*.png share cards, /api/share/qr.svg, /embed/artists/:id
   app.use('/api/payments', require('./routes/payments'));
   app.use('/api/reports', require('./routes/reports'));

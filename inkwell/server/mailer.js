@@ -149,7 +149,7 @@ const templates = {
       cta: { label: 'Review the request', url: `${APP_URL}/appointments` },
     };
   },
-  bookingStatus(appt, action, actorName) {
+  bookingStatus(appt, action, actorName, links) {
     const map = {
       confirm: ['Booking confirmed', `${actorName} confirmed your session on ${fmtWhen(appt.starts_at)}.`],
       decline: ['Booking declined', `${actorName} could not take your session on ${fmtWhen(appt.starts_at)}. Any deposit you paid has been refunded.`],
@@ -157,7 +157,9 @@ const templates = {
       complete: ['Session completed', `${actorName} marked your session on ${fmtWhen(appt.starts_at)} as completed.${appt.price ? ` The session total is ${money(appt.price)}.` : ''}`],
     };
     const [title, line] = map[action];
-    return { subject: title, title, paragraphs: [line], cta: { label: 'View bookings', url: `${APP_URL}/appointments` } };
+    const paragraphs = [line];
+    if (links && links.google) paragraphs.push(`Add it to your calendar: ${links.google}`, 'You will get a reminder the day before and two hours before the session.');
+    return { subject: title, title, paragraphs, cta: { label: 'View bookings', url: `${APP_URL}/appointments` } };
   },
   paymentDue(payment, appt) {
     return {
@@ -239,6 +241,31 @@ const templates = {
       title: 'New review',
       paragraphs: [review.body ? `"${review.body}"` : `${review.client_name} rated the session ${review.rating} out of 5.`],
       cta: { label: 'See your reviews', url: `${APP_URL}/artists/${artistId}` },
+    };
+  },
+  sessionReminder(appt, recipientId, kind, links) {
+    const isArtist = recipientId === appt.artist_id;
+    const other = isArtist ? appt.client_name : appt.artist_name;
+    const when = fmtWhen(appt.starts_at);
+    const where = [appt.studio_name, appt.artist_location].filter(Boolean).join(', ');
+    const lines = [kind === 'soon' ? `Your session with ${other} starts at ${fmtWhen(appt.starts_at).replace(/^.*?, /, '')} today, in about two hours.` : `Your session with ${other} is tomorrow, ${when}.`];
+    if (where && !isArtist) lines.push(`Where: ${where}.`);
+    if (!isArtist) lines.push('Eat a proper meal, bring water, and wear something that gives easy access to the placement.');
+    if (appt.note) lines.push(`Notes: ${appt.note}`);
+    if (links && links.google) lines.push(`Add it to your calendar: ${links.google}`);
+    return {
+      to: recipientId, subject: kind === 'soon' ? `Starting soon: session with ${other}` : `Tomorrow: your session with ${other}`,
+      title: kind === 'soon' ? 'Starting in about two hours' : 'Your session is tomorrow',
+      paragraphs: lines,
+      cta: { label: 'View booking', url: `${APP_URL}/appointments` },
+    };
+  },
+  confirmationNudge(appt) {
+    return {
+      to: appt.artist_id, subject: `${appt.client_name}'s booking still needs your confirmation`,
+      title: 'A booking is waiting on you',
+      paragraphs: [`${appt.client_name} requested ${fmtWhen(appt.starts_at)} and it is less than two days away. Confirm or decline so they can plan.`],
+      cta: { label: 'Review booking', url: `${APP_URL}/appointments` },
     };
   },
   reviewReminder(appt, clientId) {

@@ -17,7 +17,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const findByEmail = db.prepare('SELECT * FROM users WHERE email = ?');
 const findById = db.prepare(`
-  SELECT id, email, name, role, avatar_url, bio, location, email_notifications, push_notifications, is_admin, suspended_at, suspended_reason, terms_accepted_at, created_at
+  SELECT id, email, name, role, avatar_url, bio, location, email_notifications, push_notifications, session_reminders, is_admin, suspended_at, suspended_reason, terms_accepted_at, created_at
   FROM users WHERE id = ?
 `);
 const insertUser = db.prepare(`
@@ -99,7 +99,7 @@ router.get('/me', (req, res) => {
 });
 
 const updateUser = db.prepare(`
-  UPDATE users SET name = @name, bio = @bio, location = @location, email_notifications = @email_notifications, push_notifications = @push_notifications WHERE id = @id
+  UPDATE users SET name = @name, bio = @bio, location = @location, email_notifications = @email_notifications, push_notifications = @push_notifications, session_reminders = @session_reminders WHERE id = @id
 `);
 const upsertProfile = db.prepare(`
   INSERT INTO artist_profiles
@@ -143,6 +143,9 @@ router.put('/me', requireAuth, (req, res) => {
       push_notifications: body.push_notifications === undefined
         ? (req.user.push_notifications === false ? 0 : 1)
         : (body.push_notifications ? 1 : 0),
+      session_reminders: body.session_reminders === undefined
+        ? (req.user.session_reminders === false ? 0 : 1)
+        : (body.session_reminders ? 1 : 0),
     });
     if (req.user.role === 'artist') {
       const current = req.user.profile;
