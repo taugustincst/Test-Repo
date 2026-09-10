@@ -50,8 +50,26 @@ straight from an artist's published hours.
 - Signed-in users change their password from settings, which signs out other devices.
 
 **Reviews**
-- Clients review an artist after a completed session (1 to 5 stars and text). Artists can reply.
-- Average rating and review count show on artist cards and profiles.
+- Clients review an artist after a completed session (1 to 5 stars, text and up to three photos,
+  healed shots encouraged). Every review is marked as a verified session. Artists can reply.
+- Artist profiles show the average, a star breakdown, the share rated 4 stars or more, a strip of
+  client photos, and reviews sortable by newest, highest, lowest, with photos or most helpful.
+  Signed-in users can mark a review helpful.
+- Clients can edit a review for 30 days, see all their reviews and the sessions still waiting for
+  one on their dashboard, and get one reminder email two days after a completed session
+  (`INKWELL_REVIEW_REMINDER_DAYS`).
+
+**Portfolio sharing**
+- Share buttons on artist profiles, galleries and pieces: the device share sheet where the browser
+  has one, copy link, QR code, email, WhatsApp, X, Facebook and Pinterest.
+- Every artist, gallery, piece and shared board has a generated 1200×630 share card (`/og/...png`)
+  used as its link preview, so shared links look right in messages and on social.
+- Artists get a "Share your portfolio" panel on the dashboard with their link, QR code, share card
+  and an embed snippet. The embed (`/embed/artists/:id?theme=light|dark&limit=`) is a small
+  frameable page showing their most liked work with a booking button, for their own website.
+- Boards: anyone signed in can save pieces into boards (reference boards, mood boards). Boards are
+  private until shared; a board can be shared by link, attached to a tattoo request so artists can
+  open it, or sent in a message.
 
 **Trust and safety**
 - Anyone signed in can report an artwork, comment, request, review or user.
@@ -229,6 +247,7 @@ put uploads on object storage behind the same `/uploads` path and rate limit at 
 | `INKWELL_IMAGE_MAX_EDGE` | `1800`          | Long-edge cap for processed uploads |
 | `LOG_FORMAT`          | text               | `json` for structured request logs  |
 | `INKWELL_ANALYTICS_RETENTION_DAYS` | `400` | How long view events are kept       |
+| `INKWELL_REVIEW_REMINDER_DAYS` | `2` | Days after a completed session before the review reminder |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | generated | Web push keys; generated and stored in the database if unset |
 | `VAPID_CONTACT`       | `mailto:hello@inkwell.local` | Contact for push services |
 | `FCM_SERVICE_ACCOUNT_JSON` | unset         | Firebase service account (JSON or path) for native push |
@@ -250,7 +269,9 @@ All endpoints live under `/api` and return JSON. Authentication is a session coo
 | Booking      | `GET /artists/:id/availability`, `PUT /artists/me/availability`, `GET /artists/:id/slots?date=`, `GET`/`POST /appointments`, `GET /appointments/:id`, `POST /appointments/:id/confirm|decline|complete|cancel` (`complete` accepts `price`) |
 | Payments     | `GET /payments/config`, `GET /payments`, `POST /payments/:id/pay` (demo card), `POST /payments/:id/checkout` and `POST /payments/:id/confirm` (Stripe) |
 | Messages     | `GET /messages?filter=all|unread|starred|archived&q=`, `GET /messages/unread`, `POST /messages/read-all`, `GET /messages/stream` (SSE), `GET /messages/:userId?before=`, `POST /messages/:userId` (JSON or multipart with `image`, `artwork_id`), `PATCH /messages/:userId` (`starred`, `muted`, `archived`), `POST /messages/:userId/read|unread`, `DELETE /messages/:userId/messages/:id`, `POST`/`DELETE /messages/:userId/block`, `GET`/`POST /messages/saved-replies`, `PUT`/`DELETE /messages/saved-replies/:id` |
-| Reviews      | `GET /artists/:id/reviews`, `POST /appointments/:id/review`, `POST /reviews/:id/reply`, `DELETE /reviews/:id` |
+| Reviews      | `GET /artists/:id/reviews?sort=newest|highest|lowest|photos|helpful&page=`, `GET /reviews/mine`, `POST /appointments/:id/review` (multipart, `photos[]`), `PUT /reviews/:id` (edit, `remove_photos`), `POST /reviews/:id/helpful`, `POST /reviews/:id/reply`, `DELETE /reviews/:id` |
+| Boards       | `GET /collections?artwork_id=`, `POST /collections`, `GET`/`PUT`/`DELETE /collections/:id`, `POST /collections/:id/items`, `DELETE /collections/:id/items/:artworkId`, `GET /collections/shared/:token` (public) |
+| Sharing      | `GET /share/qr.svg?url=`; at the root: `GET /og/artists|artworks|galleries/:id.png`, `GET /og/collections/:token.png`, `GET /embed/artists/:id` |
 | Reports      | `POST /reports`, `GET /reports/reasons` |
 | Admin        | `GET /admin/overview`, `GET /admin/reports`, `POST /admin/reports/:id/resolve`, `GET /admin/users`, `POST /admin/users/:id/suspend|unsuspend|admin`, `DELETE /admin/content/:type/:id` |
 | Account      | `GET /auth/me/export`, `DELETE /auth/me`, `POST /auth/logout-all` |
@@ -280,8 +301,10 @@ inkwell/
     push.js         Web push (VAPID), Firebase Cloud Messaging, notification center
     analytics.js    View tracking and the artist analytics report
     messaging.js    Live message events (SSE), reply-time stat, booking context for threads
+    share.js        Share cards (sharp), QR codes, embeddable portfolio widget
+    reminders.js    Scheduled nudges (review reminders)
     seed.js         Demo data and SVG artwork generator
-    routes/         auth, artists, galleries, requests, bookings, payments, messages, reviews, reports, admin, push, analytics
+    routes/         auth, artists, galleries, requests, bookings, payments, messages, collections, share, reviews, reports, admin, push, analytics
   scripts/          backup.js, make-admin.js
   Dockerfile, docker-compose.yml, .env.example
   public/

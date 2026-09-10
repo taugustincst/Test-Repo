@@ -54,9 +54,11 @@ function cleanStyle(style) {
   return STYLES.includes(style) ? style : '';
 }
 
+const userSaved = db.prepare('SELECT 1 FROM collection_items ci JOIN collections c ON c.id = ci.collection_id WHERE c.user_id = ? AND ci.artwork_id = ? LIMIT 1');
 function decorate(artwork, user) {
   if (!artwork) return artwork;
   artwork.liked = user ? !!userLiked.get(user.id, artwork.id) : false;
+  artwork.saved = user ? !!userSaved.get(user.id, artwork.id) : false;
   return artwork;
 }
 

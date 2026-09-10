@@ -128,7 +128,7 @@ function context(artistId, clientId) {
 
 /* ---------- attachments ---------- */
 
-const ATTACHMENT_TYPES = new Set(['image', 'artwork']);
+const ATTACHMENT_TYPES = new Set(['image', 'artwork', 'collection']);
 
 function parseAttachments(json) {
   if (!json) return [];
@@ -146,6 +146,7 @@ function preview(row) {
   if (row.body) return row.body;
   const atts = parseAttachments(row.attachments);
   if (atts.some((a) => a.type === 'artwork')) return 'Shared a tattoo';
+  if (atts.some((a) => a.type === 'collection')) return 'Shared a board';
   if (atts.length) return atts.length > 1 ? `${atts.length} photos` : 'Photo';
   return '';
 }

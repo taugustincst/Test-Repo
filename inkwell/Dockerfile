@@ -13,7 +13,9 @@ ENV NODE_ENV=production \
     INKWELL_SKIP_SEED=1 \
     TRUST_PROXY=1
 WORKDIR /app
-RUN addgroup --system inkwell && adduser --system --ingroup inkwell inkwell \
+# Fonts for the share-card images rendered with sharp.
+RUN apt-get update && apt-get install -y --no-install-recommends fontconfig fonts-dejavu-core && rm -rf /var/lib/apt/lists/* \
+ && addgroup --system inkwell && adduser --system --ingroup inkwell inkwell \
  && mkdir -p /data/uploads && chown -R inkwell:inkwell /data
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json ./

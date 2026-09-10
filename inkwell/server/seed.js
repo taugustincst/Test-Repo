@@ -422,7 +422,8 @@ function seed() {
 
     // Six months of history so the analytics dashboard has something to show. Sofia (index 5)
     // is left untouched because the test suite asserts exact numbers for her.
-    const insertReview = db.prepare(`INSERT INTO reviews (appointment_id, artist_id, client_id, rating, body, created_at) VALUES (?, ?, ?, ?, ?, datetime('now', ?))`);
+    const insertReview = db.prepare(`INSERT INTO reviews (appointment_id, artist_id, client_id, rating, body, photos, created_at) VALUES (?, ?, ?, ?, ?, ?, datetime('now', ?))`);
+    const insertVote = db.prepare('INSERT OR IGNORE INTO review_votes (user_id, review_id) VALUES (?, ?)');
     const insertEvent = db.prepare(`INSERT INTO analytics_events (artist_id, kind, target_id, visitor_key, created_at) VALUES (?, ?, ?, ?, datetime('now', ?, ?))`);
     const insertPastAppt = db.prepare(`
       INSERT INTO appointments (artist_id, client_id, request_id, starts_at, ends_at, note, status, deposit_amount, price, created_at)
@@ -464,7 +465,10 @@ function seed() {
         }
         if (status === 'completed' && rand() < 0.55) {
           const rating = rand() < 0.7 ? 5 : (rand() < 0.75 ? 4 : 3);
-          insertReview.run(apptId, artistId, clientId, rating, pick(REVIEW_TEXTS), `-${Math.max(0, daysAgo - between(1, 5))} days`);
+          // Some reviews carry healed photos (demo art stands in for them) and helpful votes.
+          const photos = rand() < 0.35 && artworkIdsFor.length ? [pick(artworkIdsFor)].map((id) => { const row = db.prepare('SELECT image_url, thumb_url FROM artworks WHERE id = ?').get(id); return { url: row.image_url, thumb_url: row.thumb_url || row.image_url, width: 800, height: 1000 }; }) : [];
+          const reviewId = Number(insertReview.run(apptId, artistId, clientId, rating, pick(REVIEW_TEXTS), JSON.stringify(photos), `-${Math.max(0, daysAgo - between(1, 5))} days`).lastInsertRowid);
+          for (let v = between(0, 4); v > 0; v -= 1) insertVote.run(clientIds[between(0, clientIds.length - 1)], reviewId);
         }
       }
       // Ninety days of views with a weekend lift and a slow upward trend.
@@ -484,6 +488,16 @@ function seed() {
         }
       }
     });
+
+    // Boards: Jordan keeps two reference boards; one is shared by link.
+    const insertBoard = db.prepare('INSERT INTO collections (user_id, title, description, token, is_public, created_at, updated_at) VALUES (?, ?, ?, ?, ?, datetime(\'now\', ?), datetime(\'now\', ?))');
+    const insertBoardItem = db.prepare('INSERT OR IGNORE INTO collection_items (collection_id, artwork_id, note, created_at) VALUES (?, ?, ?, datetime(\'now\', ?))');
+    const boardArt = db.prepare('SELECT id FROM artworks WHERE artist_id = ? ORDER BY id LIMIT ?');
+    const sleeveBoard = Number(insertBoard.run(clientIds[0], 'Forearm sleeve ideas', 'Blackwork and dotwork pieces that could flow into one sleeve. Mara and Diego are the front-runners.', 'demo-sleeve-jl', 1, '-12 days', '-2 days').lastInsertRowid);
+    [...boardArt.all(artistIds[0], 4), ...boardArt.all(artistIds[1], 2)].forEach((a, i) => insertBoardItem.run(sleeveBoard, a.id, i === 0 ? 'This density, but on the forearm' : '', `-${10 - i} days`));
+    const somedayBoard = Number(insertBoard.run(clientIds[0], 'Someday', '', 'demo-someday-jl', 0, '-30 days', '-8 days').lastInsertRowid);
+    [...boardArt.all(artistIds[2], 2), ...boardArt.all(artistIds[4], 1)].forEach((a, i) => insertBoardItem.run(somedayBoard, a.id, '', `-${20 - i} days`));
+    db.prepare('UPDATE tattoo_requests SET collection_id = ? WHERE id = (SELECT id FROM tattoo_requests WHERE client_id = ? ORDER BY id LIMIT 1)').run(sleeveBoard, clientIds[0]);
 
     // Messages: a populated inbox for Mara (artist 0) plus a few threads elsewhere.
     const artFor = db.prepare('SELECT id, title, style, thumb_url, image_url FROM artworks WHERE artist_id = ? ORDER BY id LIMIT 6');
