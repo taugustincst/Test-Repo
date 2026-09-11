@@ -22,6 +22,19 @@ straight from an artist's published hours.
 - Clients pick a day, pick a slot, add a note, and request a booking.
 - Artists confirm, decline, or complete sessions. Either side can cancel. Taken slots are blocked.
 - A "Books closed" switch stops new booking requests without hiding the profile.
+- Reminders: artist and client each get an email, push and in-app reminder the day before and two
+  hours before a confirmed session; artists get a nudge for bookings still unconfirmed two days
+  out. Each reminder is sent once, whatever the process uptime. Clients and artists can turn
+  session reminders off in settings.
+- Calendar sync: every account has a private iCalendar feed (`/calendar/<token>.ics`) to
+  subscribe to from Google Calendar, Apple Calendar or Outlook, with pending sessions tentative and
+  cancellations propagated; the link can be reset. Each booking card has "Add to calendar" (Google,
+  Outlook.com, .ics download), and confirmation emails carry the Google link.
+- Busy calendar import: an artist can connect the private iCal address of a personal or studio
+  calendar. Its events block booking slots, refreshed every 30 minutes
+  (`INKWELL_BUSY_CALENDAR_REFRESH_MINUTES`). Recurring events are not expanded.
+- Appointment times are wall-clock times in the server's timezone (set `TZ`); calendar files carry
+  `INKWELL_TIMEZONE` (defaults to the server zone).
 
 **Payments and deposits**
 - Artists set a booking deposit. It is charged when a client books and holds the slot.
@@ -248,6 +261,8 @@ put uploads on object storage behind the same `/uploads` path and rate limit at 
 | `LOG_FORMAT`          | text               | `json` for structured request logs  |
 | `INKWELL_ANALYTICS_RETENTION_DAYS` | `400` | How long view events are kept       |
 | `INKWELL_REVIEW_REMINDER_DAYS` | `2` | Days after a completed session before the review reminder |
+| `INKWELL_TIMEZONE` | server zone | IANA timezone written into calendar files |
+| `INKWELL_BUSY_CALENDAR_REFRESH_MINUTES` | `30` | How often artists' external busy calendars are re-fetched |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | generated | Web push keys; generated and stored in the database if unset |
 | `VAPID_CONTACT`       | `mailto:hello@inkwell.local` | Contact for push services |
 | `FCM_SERVICE_ACCOUNT_JSON` | unset         | Firebase service account (JSON or path) for native push |
@@ -266,7 +281,8 @@ All endpoints live under `/api` and return JSON. Authentication is a session coo
 | Galleries    | `GET /feed`, `POST /galleries`, `GET`/`PUT`/`DELETE /galleries/:id`, `POST /galleries/:id/artworks` |
 | Artworks     | `GET`/`PUT`/`DELETE /artworks/:id`, `POST /artworks/:id/like`, `GET`/`POST /artworks/:id/comments`, `DELETE /comments/:id` |
 | Requests     | `GET`/`POST /requests`, `GET`/`DELETE /requests/:id`, `PUT /requests/:id/status`, `POST /requests/:id/proposals`, `POST /requests/proposals/:id/accept|decline` |
-| Booking      | `GET /artists/:id/availability`, `PUT /artists/me/availability`, `GET /artists/:id/slots?date=`, `GET`/`POST /appointments`, `GET /appointments/:id`, `POST /appointments/:id/confirm|decline|complete|cancel` (`complete` accepts `price`) |
+| Booking      | `GET /artists/:id/availability`, `PUT /artists/me/availability`, `GET /artists/:id/slots?date=`, `GET`/`POST /appointments`, `GET /appointments/:id`, `GET /appointments/:id/calendar.ics`, `POST /appointments/:id/confirm|decline|complete|cancel` (`complete` accepts `price`) |
+| Calendar     | `GET /calendar` (feed links, busy status), `POST /calendar/reset`, `PUT`/`DELETE /calendar/busy`, `POST /calendar/busy/sync`; at the root: `GET /calendar/:token.ics` |
 | Payments     | `GET /payments/config`, `GET /payments`, `POST /payments/:id/pay` (demo card), `POST /payments/:id/checkout` and `POST /payments/:id/confirm` (Stripe) |
 | Messages     | `GET /messages?filter=all|unread|starred|archived&q=`, `GET /messages/unread`, `POST /messages/read-all`, `GET /messages/stream` (SSE), `GET /messages/:userId?before=`, `POST /messages/:userId` (JSON or multipart with `image`, `artwork_id`), `PATCH /messages/:userId` (`starred`, `muted`, `archived`), `POST /messages/:userId/read|unread`, `DELETE /messages/:userId/messages/:id`, `POST`/`DELETE /messages/:userId/block`, `GET`/`POST /messages/saved-replies`, `PUT`/`DELETE /messages/saved-replies/:id` |
 | Reviews      | `GET /artists/:id/reviews?sort=newest|highest|lowest|photos|helpful&page=`, `GET /reviews/mine`, `POST /appointments/:id/review` (multipart, `photos[]`), `PUT /reviews/:id` (edit, `remove_photos`), `POST /reviews/:id/helpful`, `POST /reviews/:id/reply`, `DELETE /reviews/:id` |
@@ -302,9 +318,10 @@ inkwell/
     analytics.js    View tracking and the artist analytics report
     messaging.js    Live message events (SSE), reply-time stat, booking context for threads
     share.js        Share cards (sharp), QR codes, embeddable portfolio widget
-    reminders.js    Scheduled nudges (review reminders)
+    reminders.js    Scheduled nudges: session reminders, confirmation nudges, review reminders, busy-calendar refresh
+    calendar.js     iCalendar feeds and files, add-to-calendar links, external busy-calendar import
     seed.js         Demo data and SVG artwork generator
-    routes/         auth, artists, galleries, requests, bookings, payments, messages, collections, share, reviews, reports, admin, push, analytics
+    routes/         auth, artists, galleries, requests, bookings, payments, messages, collections, share, calendar, reviews, reports, admin, push, analytics
   scripts/          backup.js, make-admin.js
   Dockerfile, docker-compose.yml, .env.example
   public/

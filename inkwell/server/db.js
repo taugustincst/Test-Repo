@@ -315,6 +315,24 @@ CREATE TABLE IF NOT EXISTS collection_items (
   PRIMARY KEY (collection_id, artwork_id)
 );
 
+CREATE TABLE IF NOT EXISTS appointment_reminders (
+  appointment_id INTEGER NOT NULL REFERENCES appointments(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  sent_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (appointment_id, user_id, kind)
+);
+
+CREATE TABLE IF NOT EXISTS busy_events (
+  artist_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  uid TEXT NOT NULL,
+  starts_at TEXT NOT NULL,
+  ends_at TEXT NOT NULL,
+  summary TEXT DEFAULT '',
+  all_day INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (artist_id, uid)
+);
+
 CREATE INDEX IF NOT EXISTS idx_artworks_artist ON artworks(artist_id);
 CREATE INDEX IF NOT EXISTS idx_artworks_gallery ON artworks(gallery_id);
 CREATE INDEX IF NOT EXISTS idx_comments_artwork ON comments(artwork_id);
@@ -338,6 +356,7 @@ CREATE INDEX IF NOT EXISTS idx_saved_replies_user ON saved_replies(user_id, crea
 CREATE INDEX IF NOT EXISTS idx_collections_user ON collections(user_id, updated_at);
 CREATE INDEX IF NOT EXISTS idx_collection_items_artwork ON collection_items(artwork_id);
 CREATE INDEX IF NOT EXISTS idx_review_votes_review ON review_votes(review_id);
+CREATE INDEX IF NOT EXISTS idx_busy_events_time ON busy_events(artist_id, starts_at, ends_at);
 `;
 
 db.exec(SCHEMA);
@@ -365,8 +384,14 @@ ensureColumn('reviews', 'photos', 'TEXT');
 ensureColumn('reviews', 'updated_at', 'TEXT');
 ensureColumn('appointments', 'review_reminded_at', 'TEXT');
 ensureColumn('tattoo_requests', 'collection_id', 'INTEGER REFERENCES collections(id) ON DELETE SET NULL');
+ensureColumn('users', 'session_reminders', 'INTEGER NOT NULL DEFAULT 1');
+ensureColumn('users', 'calendar_token', 'TEXT');
+ensureColumn('artist_profiles', 'busy_calendar_url', 'TEXT');
+ensureColumn('artist_profiles', 'busy_calendar_synced_at', 'TEXT');
+ensureColumn('artist_profiles', 'busy_calendar_error', 'TEXT');
 // Indexes on migrated columns must come after the columns exist.
 db.exec('CREATE INDEX IF NOT EXISTS idx_users_suspended ON users(suspended_at)');
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_calendar_token ON users(calendar_token)');
 
 /** Lists of styles used for filters and validation. */
 const STYLES = [
