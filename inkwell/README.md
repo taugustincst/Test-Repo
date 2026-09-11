@@ -36,6 +36,20 @@ straight from an artist's published hours.
 - Appointment times are wall-clock times in the server's timezone (set `TZ`); calendar files carry
   `INKWELL_TIMEZONE` (defaults to the server zone).
 
+**Consent forms**
+- Before a session the client signs a consent form on any device: legal name and date of birth
+  (checked against the artist's minimum age), a seven-question health questionnaire with details
+  for anything flagged, the studio's terms, acknowledgements of risks and aftercare, optional
+  photo consent, and a drawn signature.
+- Signed forms stay with the booking as the artist's record: the artist is notified with the
+  flagged health items, can open the form from the booking card and print or save it as a PDF.
+  The signature image is served only to the two parties and never cached.
+- Booking cards show "Consent ✓" or "Consent pending"; the day-before reminder asks unsigned
+  clients to complete it. Artists set their terms, minimum age and photo-consent question in
+  settings and can require a signed form before a session can be marked completed.
+- When a client deletes their account the health answers are erased; the signed record stays for
+  the artist's liability records.
+
 **Payments and deposits**
 - Artists set a booking deposit. It is charged when a client books and holds the slot.
 - When an artist completes a session they can enter the total. The remainder after the deposit
@@ -283,6 +297,7 @@ All endpoints live under `/api` and return JSON. Authentication is a session coo
 | Requests     | `GET`/`POST /requests`, `GET`/`DELETE /requests/:id`, `PUT /requests/:id/status`, `POST /requests/:id/proposals`, `POST /requests/proposals/:id/accept|decline` |
 | Booking      | `GET /artists/:id/availability`, `PUT /artists/me/availability`, `GET /artists/:id/slots?date=`, `GET`/`POST /appointments`, `GET /appointments/:id`, `GET /appointments/:id/calendar.ics`, `POST /appointments/:id/confirm|decline|complete|cancel` (`complete` accepts `price`) |
 | Calendar     | `GET /calendar` (feed links, busy status), `POST /calendar/reset`, `PUT`/`DELETE /calendar/busy`, `POST /calendar/busy/sync`; at the root: `GET /calendar/:token.ics` |
+| Consent      | `GET`/`PUT /consent/settings` (artist), `GET`/`POST /appointments/:id/consent`, `GET /appointments/:id/consent/signature.png` |
 | Payments     | `GET /payments/config`, `GET /payments`, `POST /payments/:id/pay` (demo card), `POST /payments/:id/checkout` and `POST /payments/:id/confirm` (Stripe) |
 | Messages     | `GET /messages?filter=all|unread|starred|archived&q=`, `GET /messages/unread`, `POST /messages/read-all`, `GET /messages/stream` (SSE), `GET /messages/:userId?before=`, `POST /messages/:userId` (JSON or multipart with `image`, `artwork_id`), `PATCH /messages/:userId` (`starred`, `muted`, `archived`), `POST /messages/:userId/read|unread`, `DELETE /messages/:userId/messages/:id`, `POST`/`DELETE /messages/:userId/block`, `GET`/`POST /messages/saved-replies`, `PUT`/`DELETE /messages/saved-replies/:id` |
 | Reviews      | `GET /artists/:id/reviews?sort=newest|highest|lowest|photos|helpful&page=`, `GET /reviews/mine`, `POST /appointments/:id/review` (multipart, `photos[]`), `PUT /reviews/:id` (edit, `remove_photos`), `POST /reviews/:id/helpful`, `POST /reviews/:id/reply`, `DELETE /reviews/:id` |
@@ -320,8 +335,9 @@ inkwell/
     share.js        Share cards (sharp), QR codes, embeddable portfolio widget
     reminders.js    Scheduled nudges: session reminders, confirmation nudges, review reminders, busy-calendar refresh
     calendar.js     iCalendar feeds and files, add-to-calendar links, external busy-calendar import
+    consent.js      Consent form definition, validation and signature handling
     seed.js         Demo data and SVG artwork generator
-    routes/         auth, artists, galleries, requests, bookings, payments, messages, collections, share, calendar, reviews, reports, admin, push, analytics
+    routes/         auth, artists, galleries, requests, bookings, payments, messages, collections, share, calendar, consent, reviews, reports, admin, push, analytics
   scripts/          backup.js, make-admin.js
   Dockerfile, docker-compose.yml, .env.example
   public/

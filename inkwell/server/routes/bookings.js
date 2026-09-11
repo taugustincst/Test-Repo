@@ -7,6 +7,7 @@ const ledger = require('../ledger');
 const mailer = require('../mailer');
 const analytics = require('../analytics');
 const calendar = require('../calendar');
+const consent = require('../consent');
 
 const router = express.Router();
 
@@ -146,7 +147,10 @@ router.get('/artists/:id/slots', (req, res) => {
 
 router.get('/appointments', requireAuth, (req, res) => {
   const list = ledger.attachPayments(appointmentsForUser.all(req.user.id, req.user.id));
-  list.forEach((a) => { a.calendar = ['pending', 'confirmed'].includes(a.status) ? calendar.links(a, req.user.id) : null; });
+  list.forEach((a) => {
+    a.calendar = ['pending', 'confirmed'].includes(a.status) ? calendar.links(a, req.user.id) : null;
+    a.consent = consent.statusFor(a.id, a.artist_id);
+  });
   res.json({ appointments: list, timezone: calendar.TIMEZONE });
 });
 
@@ -232,6 +236,10 @@ router.post('/appointments/:id/:action', requireAuth, async (req, res) => {
   const actorRole = isArtist ? 'artist' : 'client';
 
   if (action === 'complete') {
+    const consentStatus = consent.statusFor(appt.id, appt.artist_id);
+    if (consentStatus.required && !consentStatus.signed_at && !(req.body || {}).skip_consent) {
+      return res.status(400).json({ error: `${appt.client_name} has not signed the consent form. Ask them to sign it, or complete anyway.`, consent_missing: true });
+    }
     // The artist can record the session total; the remainder after the deposit becomes a balance payment.
     const raw = (req.body || {}).price;
     if (raw !== undefined && raw !== null && raw !== '') {

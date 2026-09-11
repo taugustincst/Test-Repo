@@ -270,6 +270,7 @@ const exportQueries = {
   saved_replies: db.prepare('SELECT * FROM saved_replies WHERE user_id = ?'),
   conversation_state: db.prepare('SELECT * FROM conversation_state WHERE user_id = ?'),
   blocks: db.prepare('SELECT * FROM blocks WHERE blocker_id = ?'),
+  consent_forms: db.prepare('SELECT id, appointment_id, artist_id, full_name, date_of_birth, answers, acknowledgements, photo_consent, terms_text, form_version, signed_at FROM consent_forms WHERE client_id = ?'),
 };
 
 router.get('/me/export', requireAuth, (req, res) => {
@@ -304,6 +305,7 @@ const purge = [
   'DELETE FROM conversation_state WHERE user_id = ? OR other_id = ?',
   'DELETE FROM saved_replies WHERE user_id = ?',
   'DELETE FROM blocks WHERE blocker_id = ? OR blocked_id = ?',
+  "UPDATE consent_forms SET answers = '{}', ip = NULL, user_agent = NULL WHERE client_id = ?", // health answers go; the signed record stays for the artist
   'DELETE FROM reviews WHERE client_id = ?',
   'DELETE FROM sessions WHERE user_id = ?',
   'DELETE FROM password_resets WHERE user_id = ?',
