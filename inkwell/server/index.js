@@ -156,6 +156,7 @@ function createApp(options = {}) {
   app.use('/api/artists/me/analytics', require('./routes/analytics')); // before the artists router's /:id
   app.use('/api/artists', require('./routes/artists'));
   app.use('/api', require('./routes/reviews')); // before bookings: its /appointments/:id/review must win over /appointments/:id/:action
+  app.use('/api', require('./routes/consent')); // same reason: /appointments/:id/consent
   app.use('/api', require('./routes/bookings'));
   app.use('/api', require('./routes/galleries'));
   app.use('/api/requests', require('./routes/requests'));

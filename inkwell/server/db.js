@@ -333,6 +333,24 @@ CREATE TABLE IF NOT EXISTS busy_events (
   PRIMARY KEY (artist_id, uid)
 );
 
+CREATE TABLE IF NOT EXISTS consent_forms (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  appointment_id INTEGER NOT NULL UNIQUE REFERENCES appointments(id) ON DELETE CASCADE,
+  client_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  artist_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  full_name TEXT NOT NULL,
+  date_of_birth TEXT NOT NULL,
+  answers TEXT NOT NULL DEFAULT '{}',
+  acknowledgements TEXT NOT NULL DEFAULT '{}',
+  photo_consent INTEGER,
+  signature BLOB NOT NULL,
+  terms_text TEXT DEFAULT '',
+  form_version INTEGER NOT NULL DEFAULT 1,
+  ip TEXT,
+  user_agent TEXT,
+  signed_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_artworks_artist ON artworks(artist_id);
 CREATE INDEX IF NOT EXISTS idx_artworks_gallery ON artworks(gallery_id);
 CREATE INDEX IF NOT EXISTS idx_comments_artwork ON comments(artwork_id);
@@ -389,6 +407,10 @@ ensureColumn('users', 'calendar_token', 'TEXT');
 ensureColumn('artist_profiles', 'busy_calendar_url', 'TEXT');
 ensureColumn('artist_profiles', 'busy_calendar_synced_at', 'TEXT');
 ensureColumn('artist_profiles', 'busy_calendar_error', 'TEXT');
+ensureColumn('artist_profiles', 'consent_terms', 'TEXT');
+ensureColumn('artist_profiles', 'require_consent', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('artist_profiles', 'consent_photo_ask', 'INTEGER NOT NULL DEFAULT 1');
+ensureColumn('artist_profiles', 'consent_min_age', 'INTEGER NOT NULL DEFAULT 18');
 // Indexes on migrated columns must come after the columns exist.
 db.exec('CREATE INDEX IF NOT EXISTS idx_users_suspended ON users(suspended_at)');
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_calendar_token ON users(calendar_token)');

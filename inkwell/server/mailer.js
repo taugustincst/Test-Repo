@@ -252,12 +252,22 @@ const templates = {
     if (where && !isArtist) lines.push(`Where: ${where}.`);
     if (!isArtist) lines.push('Eat a proper meal, bring water, and wear something that gives easy access to the placement.');
     if (appt.note) lines.push(`Notes: ${appt.note}`);
+    if (!isArtist && appt.consent_pending) lines.push(`Please complete your consent form before the session: ${APP_URL}/appointments/${appt.id}/consent`);
+    if (isArtist && appt.consent_pending) lines.push(`${other} has not signed the consent form yet.`);
     if (links && links.google) lines.push(`Add it to your calendar: ${links.google}`);
     return {
       to: recipientId, subject: kind === 'soon' ? `Starting soon: session with ${other}` : `Tomorrow: your session with ${other}`,
       title: kind === 'soon' ? 'Starting in about two hours' : 'Your session is tomorrow',
       paragraphs: lines,
       cta: { label: 'View booking', url: `${APP_URL}/appointments` },
+    };
+  },
+  consentSigned(appt, form) {
+    return {
+      to: appt.artist_id, subject: `${appt.client_name} signed the consent form`,
+      title: 'Consent form signed',
+      paragraphs: [`${form.full_name} signed the consent form for the session on ${fmtWhen(appt.starts_at)}.${form.flags && form.flags.length ? ` They flagged ${form.flags.length} health item${form.flags.length === 1 ? '' : 's'} to read before the session.` : ' No health items were flagged.'}`],
+      cta: { label: 'View the form', url: `${APP_URL}/appointments/${appt.id}/consent` },
     };
   },
   confirmationNudge(appt) {

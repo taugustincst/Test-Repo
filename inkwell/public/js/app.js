@@ -1063,6 +1063,8 @@
     if (['pending', 'confirmed'].includes(a.status)) actions.push(`<button class="btn btn--danger btn--sm" data-act="cancel" data-id="${a.id}">Cancel</button>`);
     if (!isArtist && a.status === 'completed' && !a.review_id) actions.push(`<button class="btn btn--sm btn--subtle" data-review-appt="${a.id}">Leave a review</button>`);
     if (!isArtist && a.review_id) actions.push(`<a class="btn btn--ghost btn--sm" href="/artists/${a.artist_id}">See your review</a>`);
+    if (a.consent && a.consent.signed_at) actions.push(`<a class="btn btn--ghost btn--sm" href="/appointments/${a.id}/consent">View consent</a>`);
+    else if (a.consent && !isArtist && ['pending', 'confirmed'].includes(a.status)) actions.unshift(`<a class="btn btn--sm ${a.consent.required ? '' : 'btn--subtle'}" href="/appointments/${a.id}/consent">Sign consent form</a>`);
     actions.push(`<a class="btn btn--ghost btn--sm" href="/messages/${other.id}">Message</a>`);
     if (a.calendar) actions.push(`<details class="menu"><summary class="btn btn--ghost btn--sm">Add to calendar</summary><div class="menu__list"><a class="menu__item" href="${attr(a.calendar.google)}" target="_blank" rel="noopener">Google Calendar</a><a class="menu__item" href="${attr(a.calendar.outlook)}" target="_blank" rel="noopener">Outlook.com</a><a class="menu__item" href="${attr(a.calendar.ics)}" download rel="external">Apple / other (.ics)</a><a class="menu__item" href="/settings#calendar">Subscribe to all sessions</a></div></details>`);
     if (!isArtist && ['pending', 'confirmed', 'completed'].includes(a.status)) {
@@ -1074,7 +1076,7 @@
       <div class="card appt">
         <div class="appt__date"><span>${d.toLocaleDateString(undefined, { month: 'short' })}</span><strong>${d.getDate()}</strong><span>${d.toLocaleDateString(undefined, { weekday: 'short' })}</span></div>
         <div>
-          <div class="row"><strong>${fmtTime(a.starts_at)} – ${fmtTime(a.ends_at)}</strong>${pill(a.status)}</div>
+          <div class="row"><strong>${fmtTime(a.starts_at)} – ${fmtTime(a.ends_at)}</strong>${pill(a.status)}${consentBadge(a)}</div>
           <div class="row" style="margin-top:6px">${avatar(other.avatar, other.name, 'avatar--xs')}<a href="/artists/${isArtist ? me.id : a.artist_id}"><strong>${esc(other.name)}</strong></a><span class="muted small">${esc(other.label)}</span></div>
           ${a.request_title ? `<div class="small muted" style="margin-top:4px">For request: <a class="link" href="/requests/${a.request_id}">${esc(a.request_title)}</a></div>` : ''}
           ${a.note ? `<p class="small muted" style="margin:6px 0 0">${esc(a.note)}</p>` : ''}
@@ -1125,7 +1127,12 @@
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       try {
-        await api.post(`/api/appointments/${id}/complete`, { price: form.price.value });
+        try {
+          await api.post(`/api/appointments/${id}/complete`, { price: form.price.value });
+        } catch (err) {
+          if (!(err.data && err.data.consent_missing) || !confirm(`${err.message}\n\nComplete the session without a signed form?`)) throw err;
+          await api.post(`/api/appointments/${id}/complete`, { price: form.price.value, skip_consent: true });
+        }
         closeModal(); toast('Session completed'); reload();
       } catch (err) { handleError(err, $('.error', form)); }
     });
@@ -1220,6 +1227,179 @@
       history.replaceState({}, '', '/appointments');
       if (appt && appt.status === 'completed' && !appt.review_id) reviewModal({ appointmentId: appt.id }, () => viewAppointments());
     }
+  }
+
+  /* ---------- consent forms ---------- */
+
+  function signaturePad(canvas) {
+    const ctx = canvas.getContext('2d');
+    const scale = window.devicePixelRatio || 1;
+    const size = () => {
+      const rect = canvas.getBoundingClientRect();
+      canvas.width = Math.round(rect.width * scale); canvas.height = Math.round(rect.height * scale);
+      ctx.setTransform(scale, 0, 0, scale, 0, 0);
+      ctx.lineWidth = 2.2; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#1a1a1c';
+    };
+    size();
+    let drawing = false;
+    let strokes = 0;
+    const point = (e) => { const r = canvas.getBoundingClientRect(); const p = e.touches ? e.touches[0] : e; return { x: p.clientX - r.left, y: p.clientY - r.top }; };
+    const start = (e) => { e.preventDefault(); drawing = true; const p = point(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x + 0.1, p.y + 0.1); ctx.stroke(); strokes += 1; canvas.classList.add('signed'); };
+    const move = (e) => { if (!drawing) return; e.preventDefault(); const p = point(e); ctx.lineTo(p.x, p.y); ctx.stroke(); };
+    const end = () => { drawing = false; };
+    canvas.addEventListener('mousedown', start); canvas.addEventListener('mousemove', move); window.addEventListener('mouseup', end);
+    canvas.addEventListener('touchstart', start, { passive: false }); canvas.addEventListener('touchmove', move, { passive: false }); canvas.addEventListener('touchend', end);
+    return {
+      clear() { ctx.clearRect(0, 0, canvas.width, canvas.height); strokes = 0; canvas.classList.remove('signed'); },
+      isEmpty() { return strokes === 0; },
+      toDataURL() { return canvas.toDataURL('image/png'); },
+    };
+  }
+
+  function consentBadge(a) {
+    if (!a.consent) return '';
+    if (a.consent.signed_at) return '<span class="pill pill--completed" title="Consent form signed">Consent ✓</span>';
+    if (['pending', 'confirmed'].includes(a.status)) return `<span class="pill pill--pending" title="Consent form not signed yet">Consent ${a.consent.required ? 'required' : 'pending'}</span>`;
+    return '';
+  }
+
+  async function viewConsent(apptId) {
+    if (!requireLogin(`/appointments/${apptId}/consent`)) return;
+    loading();
+    let data;
+    try { data = await api.get(`/api/appointments/${apptId}/consent`); } catch (e) { main.innerHTML = `<div class="empty"><h3>${e.status === 403 ? 'This is not your session' : 'Session not found'}</h3><p><a class="link" href="/appointments">Back to bookings</a></p></div>`; return; }
+    const me = state.user;
+    const { appointment: a, definition: def, form } = data;
+    const isClient = me.id === a.client_id;
+    const other = isClient ? `${a.artist_name}${a.studio_name ? ` · ${a.studio_name}` : ''}` : a.client_name;
+    const head = `
+      <div class="page-head consent__head">
+        <div>
+          <a class="muted small" href="/appointments">← Bookings</a>
+          <h1 style="margin-top:6px">Consent form</h1>
+          <p class="muted">Session ${fmtSlot(a.starts_at)} with ${esc(other)}.</p>
+        </div>
+        ${form ? '<div class="row"><button type="button" class="btn btn--ghost btn--sm" data-print>Print / save as PDF</button></div>' : ''}
+      </div>`;
+
+    if (form) {
+      const yes = (k) => form.answers[k] && form.answers[k].yes;
+      main.innerHTML = `<div class="narrow consent">${head}
+        <div class="card consent__signed">
+          <div class="row row--between"><div><strong>Signed by ${esc(form.full_name)}</strong><div class="small muted">Date of birth ${esc(form.date_of_birth)} · signed ${esc(new Date(`${form.signed_at.replace(' ', 'T')}Z`).toLocaleString())} · form v${form.form_version}</div></div><span class="pill pill--completed">Signed</span></div>
+          ${form.flags.length ? `<div class="consent__flags"><strong>Health items to read before the session</strong><ul>${form.flags.map((f) => `<li><span>${esc(f.label)}</span>${f.detail ? `<em>${esc(f.detail)}</em>` : ''}</li>`).join('')}</ul></div>` : '<p class="consent__ok">No health items flagged.</p>'}
+          <h3>Health questionnaire</h3>
+          <table class="consent__table"><tbody>${def.health.map((q) => `<tr><td>${esc(q.label)}</td><td class="${yes(q.key) ? 'consent__yes' : ''}">${yes(q.key) ? 'Yes' : 'No'}</td></tr>`).join('')}</tbody></table>
+          ${form.photo_consent !== null ? `<p class="small"><strong>Photos:</strong> ${form.photo_consent ? 'agreed that photos of the finished tattoo may be shared in the artist\'s portfolio.' : 'did not agree to photos being shared.'}</p>` : ''}
+          <h3>Acknowledged</h3>
+          <ul class="consent__acks">${def.acknowledgements.map((k) => `<li>✓ ${esc(k.label)}</li>`).join('')}</ul>
+          <h3>Studio terms</h3>
+          <p class="small muted" style="white-space:pre-wrap">${esc(form.terms_text)}</p>
+          <h3>Signature</h3>
+          <div class="consent__sig"><img src="${attr(form.signature_url)}" alt="Signature of ${attr(form.full_name)}"></div>
+        </div></div>`;
+      $('[data-print]').addEventListener('click', () => window.print());
+      return;
+    }
+
+    if (!data.can_sign) {
+      main.innerHTML = `<div class="narrow consent">${head}<div class="empty"><h3>Not signed yet</h3><p>${isClient ? 'This session is no longer open for a consent form.' : `${esc(a.client_name)} has not signed the consent form yet. They can do it from their bookings page, and the day-before reminder asks them to.`}</p></div></div>`;
+      return;
+    }
+
+    main.innerHTML = `<div class="narrow consent">${head}
+      <form class="form" data-consent-form>
+        <div class="error" hidden></div>
+        <div class="card">
+          <h3>About you</h3>
+          <div class="form-row">
+            <div class="field"><label>Full legal name (as on your ID)</label><input name="full_name" value="${attr(me.name)}" required maxlength="120" autocomplete="name"></div>
+            <div class="field"><label>Date of birth</label><input name="date_of_birth" type="date" required max="${new Date().toISOString().slice(0, 10)}"><span class="hint">You must be at least ${def.min_age}. Bring photo ID to the session.</span></div>
+          </div>
+        </div>
+        <div class="card" style="margin-top:14px">
+          <h3>Health</h3>
+          <p class="small muted">Honest answers keep you safe. Only ${esc(a.artist_name.split(' ')[0])} sees them.</p>
+          ${def.health.map((q) => `
+            <fieldset class="consent__q" data-q="${attr(q.key)}">
+              <legend>${esc(q.label)}</legend>
+              <div class="row">
+                <label class="check"><input type="radio" name="q_${attr(q.key)}" value="no" required> No</label>
+                <label class="check"><input type="radio" name="q_${attr(q.key)}" value="yes"> Yes</label>
+              </div>
+              ${q.detail ? `<input class="consent__detail" name="d_${attr(q.key)}" placeholder="${attr(q.detail)}" maxlength="500" hidden>` : ''}
+            </fieldset>`).join('')}
+        </div>
+        <div class="card" style="margin-top:14px">
+          <h3>Studio terms</h3>
+          <p class="small" style="white-space:pre-wrap">${esc(def.terms)}</p>
+          <h3 style="margin-top:16px">Please confirm</h3>
+          ${def.acknowledgements.map((k) => `<label class="check consent__ack"><input type="checkbox" name="ack_${attr(k.key)}" required> ${esc(k.label)}</label>`).join('')}
+          ${def.photo_ask ? '<label class="check consent__ack consent__ack--optional"><input type="checkbox" name="photo_consent"> Optional: photos of the finished tattoo may be shared in the artist\'s portfolio and social media, without my name.</label>' : ''}
+        </div>
+        <div class="card" style="margin-top:14px">
+          <h3>Signature</h3>
+          <p class="small muted">Sign with your finger or mouse.</p>
+          <div class="consent__pad"><canvas data-pad aria-label="Signature pad"></canvas><button type="button" class="link small" data-clear>Clear</button></div>
+          <p class="small faint">By signing you confirm the answers above are true. Signed ${new Date().toLocaleDateString()} · recorded with time, address and browser for the artist's records.</p>
+          <button class="btn btn--lg btn--block" style="margin-top:12px">Sign and submit</button>
+        </div>
+      </form></div>`;
+
+    const form$ = $('[data-consent-form]');
+    const pad = signaturePad($('[data-pad]', form$));
+    $('[data-clear]', form$).addEventListener('click', () => pad.clear());
+    $$('.consent__q', form$).forEach((fs) => fs.addEventListener('change', () => {
+      const detail = $('.consent__detail', fs);
+      if (!detail) return;
+      const yes = fs.querySelector('input[value="yes"]').checked;
+      detail.hidden = !yes;
+      detail.required = yes;
+      if (yes) detail.focus();
+    }));
+    form$.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const errBox = $('.error', form$);
+      if (pad.isEmpty()) { errBox.textContent = 'Sign in the box before submitting.'; errBox.hidden = false; $('[data-pad]', form$).scrollIntoView({ block: 'center' }); return; }
+      const answers = {};
+      def.health.forEach((q) => { const yes = form$[`q_${q.key}`].value === 'yes'; answers[q.key] = { yes, detail: yes && form$[`d_${q.key}`] ? form$[`d_${q.key}`].value : '' }; });
+      const acknowledgements = {};
+      def.acknowledgements.forEach((k) => { acknowledgements[k.key] = form$[`ack_${k.key}`].checked; });
+      const btn = form$.querySelector('button.btn'); btn.disabled = true;
+      try {
+        await api.post(`/api/appointments/${apptId}/consent`, { full_name: form$.full_name.value, date_of_birth: form$.date_of_birth.value, answers, acknowledgements, photo_consent: form$.photo_consent ? form$.photo_consent.checked : undefined, signature: pad.toDataURL() });
+        toast('Consent form signed. Thank you.');
+        viewConsent(apptId);
+      } catch (err) { handleError(err, errBox); btn.disabled = false; errBox.scrollIntoView({ block: 'center' }); }
+    });
+  }
+
+  /** Artist settings: the studio's consent form. */
+  async function renderConsentSettings(box) {
+    if (!box) return;
+    let data;
+    try { data = await api.get('/api/consent/settings'); } catch { box.innerHTML = ''; return; }
+    const s = data.settings;
+    box.innerHTML = `
+      <h3>Consent form</h3>
+      <p class="small muted">Clients sign a consent form before each session: identity and age, a health questionnaire, your studio terms and a signature. Signed forms stay with the booking as your record. <a class="link" href="/appointments">See status on your bookings.</a></p>
+      <form data-consent-settings class="stack">
+        <div class="field"><label>Studio terms shown on the form</label><textarea name="terms" rows="4" maxlength="4000">${esc(s.terms)}</textarea><span class="hint">Deposits, lateness, ID, rescheduling. <button type="button" class="link" data-reset-terms>Reset to the default text</button></span></div>
+        <div class="form-row">
+          <div class="field"><label>Minimum age</label><input name="min_age" type="number" min="16" max="21" value="${attr(s.min_age)}"></div>
+          <div class="field" style="justify-content:flex-end">
+            <label class="check"><input type="checkbox" name="require_consent" ${s.require_consent ? 'checked' : ''}> Require a signed form before I can mark a session completed</label>
+            <label class="check"><input type="checkbox" name="photo_ask" ${s.photo_ask ? 'checked' : ''}> Ask clients for photo consent for my portfolio</label>
+          </div>
+        </div>
+        <div class="row"><button class="btn btn--sm btn--subtle">Save consent settings</button></div>
+      </form>`;
+    const form = $('[data-consent-settings]', box);
+    $('[data-reset-terms]', box).addEventListener('click', () => { form.terms.value = data.defaults.terms; });
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try { await api.put('/api/consent/settings', { terms: form.terms.value, min_age: form.min_age.value, require_consent: form.require_consent.checked, photo_ask: form.photo_ask.checked }); toast('Consent settings saved'); } catch (err) { handleError(err); }
+    });
   }
 
   /* ---------- calendar sync ---------- */
@@ -2359,6 +2539,7 @@
         </div>
         <div class="card" style="margin-top:14px" data-push-card><div class="loading">Loading</div></div>
         <div class="card" style="margin-top:14px" id="calendar" data-calendar-card><div class="loading">Loading</div></div>
+        ${u.role === 'artist' ? '<div class="card" style="margin-top:14px" id="consent" data-consent-card><div class="loading">Loading</div></div>' : ''}
         <div class="card" style="margin-top:14px">
           <h3>Your account</h3>
           <div class="list-item"><div><strong>Download your data</strong><div class="small muted">Everything we hold about you, as a JSON file.</div></div><a class="btn btn--ghost btn--sm" href="/api/auth/me/export" download rel="external">Export</a></div>
@@ -2368,6 +2549,7 @@
       </div>`;
     renderPushCard($('[data-push-card]'));
     renderCalendarCard($('[data-calendar-card]'));
+    renderConsentSettings($('[data-consent-card]'));
     $('[data-logout-all]').addEventListener('click', async () => {
       if (!confirm('Sign out of every device?')) return;
       try { await api.post('/api/auth/logout-all'); state.user = null; renderNav(); navigate('/'); } catch (err) { handleError(err); }
@@ -2793,7 +2975,8 @@
         <h1>Privacy Policy</h1>
         <p class="muted">Last updated: ${new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}</p>
         ${LEGAL_NOTE}
-        <h3>What we collect</h3><p>Account details (name, email, password hash, location, bio, profile photo), the content you post (galleries, requests, proposals, messages, reviews), booking and payment records (amounts, status and the last four digits of a card, never the full number), and technical logs (IP address, browser, pages requested) kept for security.</p>
+        <h3>What we collect</h3><p>Account details (name, email, password hash, location, bio, profile photo), the content you post (galleries, requests, proposals, messages, reviews), booking and payment records (amounts, status and the last four digits of a card, never the full number), consent forms you sign before a session (legal name, date of birth, health answers, signature, and the time, address and browser of signing), and technical logs (IP address, browser, pages requested) kept for security.</p>
+        <h3>Consent forms</h3><p>Health answers are shared only with the artist for that session. Signed consent forms are the artist's liability record: when you delete your account the health answers are erased but the signed form with your name, date of birth and signature stays with the booking.</p>
         <h3>How we use it</h3><p>To run the marketplace: show profiles and galleries, connect Clients with Artists, process bookings and payments, send the emails you have asked for, keep the site safe, and comply with legal obligations such as accounting rules.</p>
         <h3>Emails</h3><p>We send transactional emails about bookings, payments, proposals, messages and your account. You can turn off notification emails in settings. Account security emails are always sent.</p>
         <h3>Cookies</h3><p>We use one strictly necessary cookie to keep you signed in. We do not use advertising or tracking cookies.</p>
@@ -2936,6 +3119,7 @@
     [/^\/requests\/(\d+)$/, (m) => viewRequest(m[1])],
     [/^\/book\/(\d+)$/, (m, p) => viewBook(m[1], p)],
     [/^\/appointments$/, (_m, params) => viewAppointments(params)],
+    [/^\/appointments\/(\d+)\/consent$/, (m) => viewConsent(m[1])],
     [/^\/messages$/, (_m, params) => viewMessages(null, params)],
     [/^\/messages\/(\d+)$/, (m, params) => viewMessages(m[1], params)],
     [/^\/dashboard$/, (m, p) => viewDashboard(p)],

@@ -12,6 +12,7 @@
 const { db } = require('./db');
 const mailer = require('./mailer');
 const calendar = require('./calendar');
+const consent = require('./consent');
 
 const REVIEW_AFTER_DAYS = Number(process.env.INKWELL_REVIEW_REMINDER_DAYS) || 2;
 const REVIEW_WINDOW_DAYS = 30;
@@ -66,6 +67,7 @@ function sendSessionReminders(now = new Date()) {
       recordSent.run(appt.id, userId, due);
       if (due === 'soon') recordSent.run(appt.id, userId, 'day'); // the day-before slot has passed
       if (!wants) continue;
+      appt.consent_pending = !consent.statusFor(appt.id, appt.artist_id).signed_at;
       mailer.notify(mailer.templates.sessionReminder(appt, userId, due, calendar.links(appt, userId)));
       sent += 1;
     }
