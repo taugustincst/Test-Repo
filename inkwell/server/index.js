@@ -26,6 +26,9 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 /* ---------- share previews (Open Graph) for crawlers and link unfurls ---------- */
 
 const metaQueries = {
+  flash: db.prepare(`
+    SELECT f.title, f.style, f.price, f.size_label, f.status, f.image_url, u.name AS artist_name
+    FROM flash_designs f JOIN users u ON u.id = f.artist_id WHERE f.id = ? AND u.suspended_at IS NULL AND f.status != 'hidden'`),
   collection: db.prepare(`
     SELECT c.title, c.description, c.token, c.is_public, u.name AS owner_name,
            (SELECT COUNT(*) FROM collection_items ci WHERE ci.collection_id = c.id) AS item_count
@@ -64,6 +67,11 @@ function pageMeta(urlPath) {
   } else if ((m = urlPath.match(/^\/c\/([A-Za-z0-9_-]+)$/))) {
     const c = metaQueries.collection.get(m[1]);
     if (c && c.is_public) return { title: `${c.title} · a reference board on Inkwell`, description: (c.description || `${c.item_count} tattoo${c.item_count === 1 ? '' : 's'} saved by ${c.owner_name}. Share it with your artist or your friends.`).slice(0, 300), image: `/og/collections/${c.token}.png` };
+  } else if ((m = urlPath.match(/^\/flash\/(\d+)$/))) {
+    const f = metaQueries.flash.get(m[1]);
+    if (f) return { title: `${f.title} · flash by ${f.artist_name} on Inkwell`, description: `${f.style ? `${f.style} flash design` : 'Flash design'} by ${f.artist_name}, $${f.price}${f.size_label ? `, ${f.size_label.toLowerCase()}` : ''}. ${f.status === 'available' ? 'Available to book now.' : 'Already claimed.'}`.slice(0, 300), image: f.image_url };
+  } else if (urlPath === '/flash') {
+    return { ...base, title: 'Flash designs ready to book · Inkwell', description: 'Pre-drawn tattoo designs at a fixed price. Pick one, book a slot, done.' };
   } else if (urlPath === '/artists') {
     return { ...base, title: 'Find a tattoo artist · Inkwell' };
   } else if (urlPath === '/requests') {
@@ -162,6 +170,7 @@ function createApp(options = {}) {
   app.use('/api/requests', require('./routes/requests'));
   app.use('/api/messages', require('./routes/messages'));
   app.use('/api/collections', require('./routes/collections'));
+  app.use('/api/flash', require('./routes/flash'));
   const calendarRoutes = require('./routes/calendar');
   app.use('/api/calendar', calendarRoutes.api);
   app.use(calendarRoutes.pub); // /calendar/:token.ics

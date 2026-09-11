@@ -249,6 +249,7 @@
     navEl.innerHTML = `
       <a href="/" class="${active('/')}">Explore</a>
       <a href="/artists" class="${active('/artists')}">Artists</a>
+      <a href="/flash" class="${active('/flash')}">Flash</a>
       <a href="/requests" class="${active('/requests')}">Client requests</a>
       ${u ? `
         <a href="/notifications" class="${active('/notifications')}" title="Notifications" aria-label="Notifications">🔔<span class="nav-label">Notifications</span>${state.notifUnread ? `<span class="badge-dot">${state.notifUnread}</span>` : ''}</a>
@@ -642,6 +643,7 @@
             <div class="gallery-card__label"><strong>${esc(g.title)}</strong><span>${g.artwork_count} pieces</span></div>
           </a>`).join('')}</div>` : '<div class="empty"><h3>No galleries yet</h3></div>'}
       </section>
+      <section class="section" data-flash-section hidden></section>
       <section class="section">
         <div class="section__head"><h2>Recent work</h2></div>
         ${work.artworks.length ? `<div class="grid-art">${work.artworks.map(artCard).join('')}</div>` : '<div class="empty"><p>No pieces shared yet.</p></div>'}
@@ -649,6 +651,12 @@
       <section class="section" data-reviews></section>`;
     reviewsSection($('[data-reviews]'), artist, reviews, () => viewArtist(id));
     bindShare();
+    api.get('/api/flash', { artist_id: artist.id, limit: 12 }).then(({ flash }) => {
+      const el = $('[data-flash-section]');
+      if (!el || !flash.length) return;
+      el.hidden = false;
+      el.innerHTML = `<div class="section__head"><h2>Flash</h2><a class="link" href="/flash?artist_id=${artist.id}">Ready to book, fixed price</a></div><div class="grid-art">${flash.map((f) => flashCard(f)).join('')}</div>`;
+    }).catch(() => {});
     const reportUser = $('[data-report-user]');
     if (reportUser) reportUser.addEventListener('click', () => reportModal('user', artist.id, 'artist'));
     const follow = $('[data-follow]');
@@ -954,6 +962,9 @@
     } catch (e) { main.innerHTML = '<div class="empty"><h3>Artist not found</h3></div>'; return; }
     const openDays = new Set(avail.availability.map((w) => w.weekday));
     const requestId = params.get('request') || '';
+    const flashId = params.get('flash') || '';
+    let flashDesign = null;
+    if (flashId) { try { ({ flash: flashDesign } = await api.get(`/api/flash/${flashId}`)); } catch { flashDesign = null; } if (flashDesign && (!flashDesign.available || flashDesign.artist_id !== artist.id)) flashDesign = null; }
     const days = [];
     for (let i = 0; i < 28; i += 1) {
       const d = new Date(); d.setDate(d.getDate() + i);
@@ -996,6 +1007,7 @@
             ${artist.min_price ? `<div class="row row--between"><span class="muted">Minimum</span><strong>${money(artist.min_price)}</strong></div>` : ''}
             <div class="row row--between"><span class="muted">Session length</span><strong>${avail.session_minutes} min</strong></div>
             <div class="row row--between"><span class="muted">Deposit</span><strong>${avail.deposit_amount ? money(avail.deposit_amount) : 'None'}</strong></div>
+            ${flashDesign ? `<hr class="divider" style="margin:14px 0"><a class="board board--inline flash-pick" href="/flash/${flashDesign.id}"><div class="board__cover"><img src="${attr(flashDesign.thumb_url || flashDesign.image_url)}" alt=""></div><div class="board__body"><span class="small muted">Flash design</span><strong>${esc(flashDesign.title)}</strong><span class="small muted">${money(flashDesign.price)} fixed price · ${flashDesign.repeatable ? 'repeatable' : 'one-off, yours once you book'}</span></div></a>` : (flashId ? '<hr class="divider" style="margin:14px 0"><div class="error">That flash design is no longer available. You can still book a regular session.</div>' : '')}
             <hr class="divider" style="margin:14px 0">
             <div class="small muted">Studio hours</div>
             ${avail.availability.map((w) => `<div class="row row--between small"><span>${WEEKDAYS[w.weekday]}</span><span>${w.start_time} – ${w.end_time}</span></div>`).join('') || '<div class="small faint">Not published</div>'}
@@ -1044,7 +1056,7 @@
       if (!selectedSlot) return;
       submit.disabled = true;
       try {
-        await api.post('/api/appointments', { artist_id: artist.id, starts_at: selectedSlot, note: e.target.note.value, request_id: requestId || undefined });
+        await api.post('/api/appointments', { artist_id: artist.id, starts_at: selectedSlot, note: e.target.note.value, request_id: requestId || undefined, flash_id: flashDesign ? flashDesign.id : undefined });
         toast('Booking requested');
         navigate('/appointments');
       } catch (err) { handleError(err, $('.error', e.target)); submit.disabled = false; }
@@ -1079,6 +1091,7 @@
           <div class="row"><strong>${fmtTime(a.starts_at)} – ${fmtTime(a.ends_at)}</strong>${pill(a.status)}${consentBadge(a)}</div>
           <div class="row" style="margin-top:6px">${avatar(other.avatar, other.name, 'avatar--xs')}<a href="/artists/${isArtist ? me.id : a.artist_id}"><strong>${esc(other.name)}</strong></a><span class="muted small">${esc(other.label)}</span></div>
           ${a.request_title ? `<div class="small muted" style="margin-top:4px">For request: <a class="link" href="/requests/${a.request_id}">${esc(a.request_title)}</a></div>` : ''}
+          ${a.flash_title ? `<a class="appt__flash" href="/flash/${a.flash_id}"><img src="${attr(a.flash_thumb_url || a.flash_image_url)}" alt=""><span>Flash: <strong>${esc(a.flash_title)}</strong> · ${money(a.flash_price)}</span></a>` : ''}
           ${a.note ? `<p class="small muted" style="margin:6px 0 0">${esc(a.note)}</p>` : ''}
           ${paymentsLine(a)}
         </div>
@@ -1226,6 +1239,132 @@
       const appt = list.find((a) => String(a.id) === String(wanted));
       history.replaceState({}, '', '/appointments');
       if (appt && appt.status === 'completed' && !appt.review_id) reviewModal({ appointmentId: appt.id }, () => viewAppointments());
+    }
+  }
+
+  /* ---------- flash designs ---------- */
+
+  function flashCard(f, { manage = false } = {}) {
+    const statusPill = f.status === 'available' ? '' : `<span class="pill pill--${f.status === 'claimed' ? 'pending' : (f.status === 'sold' ? 'completed' : 'closed')}">${esc(f.status)}</span>`;
+    return `<a class="art flash-card" href="/flash/${f.id}">
+      <img src="${attr(f.thumb_url || f.image_url)}" alt="${attr(f.title)}" loading="lazy" ${f.width && f.height ? `width="${f.width}" height="${f.height}"` : ''}>
+      <div class="art__body">
+        <div class="art__title"><span>${esc(f.title)}</span><span class="flash-card__price">${money(f.price)}</span></div>
+        <div class="art__meta">${manage ? statusPill || '<span class="pill pill--open">available</span>' : `${avatar(f.artist_avatar_url, f.artist_name, 'avatar--xs')}<span>${esc(f.artist_name)}</span>`}${f.style ? `<span class="tag">${esc(f.style)}</span>` : ''}${f.repeatable ? '<span class="tag" title="Can be tattooed more than once">repeatable</span>' : '<span class="tag" title="Only one person gets this design">one-off</span>'}</div>
+      </div>
+    </a>`;
+  }
+
+  async function viewFlashBoard(params) {
+    loading();
+    const filters = { style: params.get('style') || '', max_price: params.get('max_price') || '', sort: params.get('sort') || 'newest' };
+    let data;
+    try { data = await api.get('/api/flash', filters); } catch (e) { return handleError(e); }
+    const me = state.user;
+    main.innerHTML = `
+      <div class="page-head">
+        <div><h1>Flash</h1><p class="muted">Pre-drawn designs at a fixed price. Pick one, book a slot, done. One-off designs go to the first person who books.</p></div>
+        ${me && me.role === 'artist' ? '<a class="btn" href="/dashboard?tab=flash">Manage your flash</a>' : ''}
+      </div>
+      <form class="filters" data-filters>
+        <select name="style" aria-label="Style">${styleOptions(filters.style, true)}</select>
+        <select name="max_price" aria-label="Maximum price">
+          <option value="">Any price</option>
+          ${[150, 250, 400, 600, 1000].map((p) => `<option value="${p}" ${String(p) === filters.max_price ? 'selected' : ''}>Up to ${money(p)}</option>`).join('')}
+        </select>
+        <select name="sort" aria-label="Sort">
+          <option value="newest" ${filters.sort === 'newest' ? 'selected' : ''}>Newest</option>
+          <option value="price_asc" ${filters.sort === 'price_asc' ? 'selected' : ''}>Price: low to high</option>
+          <option value="price_desc" ${filters.sort === 'price_desc' ? 'selected' : ''}>Price: high to low</option>
+        </select>
+      </form>
+      ${data.flash.length ? `<div class="grid-art">${data.flash.map((f) => flashCard(f)).join('')}</div>` : '<div class="empty"><h3>Nothing on the board right now</h3><p>Try another style or price, or follow artists to hear when they post new flash.</p></div>'}`;
+    $('[data-filters]').addEventListener('change', (e) => {
+      const p = new URLSearchParams();
+      ['style', 'max_price', 'sort'].forEach((k) => { const v = e.currentTarget[k].value; if (v && !(k === 'sort' && v === 'newest')) p.set(k, v); });
+      navigate(`/flash${p.toString() ? `?${p}` : ''}`);
+    });
+  }
+
+  function flashEditorHtml(f = {}) {
+    const sizes = ['Tiny (under 2 in)', 'Small (2-4 in)', 'Medium (4-6 in)', 'Large (6-10 in)', 'Extra large'];
+    return `
+      <div class="error" hidden></div>
+      ${f.id ? '' : '<div class="field"><label>Design image</label><input type="file" name="image" accept="image/*" required><span class="hint">JPEG, PNG, WebP or GIF up to 8 MB.</span></div>'}
+      <div class="field"><label>Title</label><input name="title" value="${attr(f.title || '')}" placeholder="Moth & moon" required maxlength="100"></div>
+      <div class="form-row">
+        <div class="field"><label>Price ($)</label><input name="price" type="number" min="0" step="1" value="${attr(f.price ?? '')}" required></div>
+        <div class="field"><label>Size</label><select name="size_label"><option value="">Not set</option>${sizes.map((s) => `<option ${f.size_label === s ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select></div>
+      </div>
+      <div class="field"><label>Style</label><select name="style">${styleOptions(f.style || '', true)}</select></div>
+      <div class="field"><label>Notes</label><textarea name="description" placeholder="Placement it suits, sittings, what is included">${esc(f.description || '')}</textarea></div>
+      <label class="check"><input type="checkbox" name="repeatable" ${f.repeatable ? 'checked' : ''}> Repeatable: more than one person can get this design</label>
+      ${f.id ? `<label class="check"><input type="checkbox" name="hidden" ${f.status === 'hidden' ? 'checked' : ''} ${f.status === 'claimed' ? 'disabled' : ''}> Hide from the board</label>` : ''}`;
+  }
+
+  function flashPayload(form) {
+    return { title: form.title.value, price: Number(form.price.value), size_label: form.size_label.value, style: form.style.value, description: form.description.value, repeatable: form.repeatable.checked, status: form.hidden && form.hidden.checked ? 'hidden' : (form.hidden ? 'available' : undefined) };
+  }
+
+  function newFlashModal(onDone) {
+    const modal = openModal(`<div class="modal__panel"><div class="modal__head"><h3 style="margin:0">New flash design</h3><button class="modal__close" data-close-modal>×</button></div>
+      <form class="form modal__body" data-form>${flashEditorHtml()}<button class="btn btn--block">Post to the board</button></form></div>`, { small: true });
+    const form = $('[data-form]', modal);
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData();
+      fd.append('image', form.image.files[0]);
+      Object.entries(flashPayload(form)).forEach(([k, v]) => { if (v !== undefined) fd.append(k, v); });
+      form.querySelector('button.btn').disabled = true;
+      try { const r = await api.post('/api/flash', fd); closeModal(); toast('Flash posted'); onDone(r.flash); } catch (err) { handleError(err, $('.error', form)); form.querySelector('button.btn').disabled = false; }
+    });
+  }
+
+  async function viewFlash(id) {
+    loading();
+    let f;
+    try { ({ flash: f } = await api.get(`/api/flash/${id}`)); } catch (e) { main.innerHTML = '<div class="empty"><h3>Design not found</h3><p><a class="link" href="/flash">Back to the board</a></p></div>'; return; }
+    const me = state.user;
+    const canBook = !me || me.role === 'client';
+    const status = { available: 'Available', claimed: 'Claimed, a booking is in progress', sold: 'Sold', hidden: 'Hidden from the board' }[f.status];
+    main.innerHTML = `
+      <div class="two-col flash">
+        <div class="flash__image"><img src="${attr(f.image_url)}" alt="${attr(f.title)}"></div>
+        <aside class="stack">
+          <div class="card">
+            <a class="muted small" href="/flash">← Flash board</a>
+            <div class="row row--between" style="margin-top:6px"><h1 style="margin:0">${esc(f.title)}</h1><strong class="flash__price">${money(f.price)}</strong></div>
+            <div class="chips" style="margin:12px 0">${f.style ? `<span class="tag">${esc(f.style)}</span>` : ''}${f.size_label ? `<span class="tag">${esc(f.size_label)}</span>` : ''}<span class="tag">${f.repeatable ? 'Repeatable' : 'One-off'}</span>${f.times_done ? `<span class="tag">Done ${f.times_done}×</span>` : ''}</div>
+            ${f.description ? `<p style="white-space:pre-wrap">${esc(f.description)}</p>` : ''}
+            <div class="row" style="margin-top:10px">${avatar(f.artist_avatar_url, f.artist_name, 'avatar--sm')}<div><a href="/artists/${f.artist_id}"><strong>${esc(f.artist_name)}</strong></a><div class="small muted">${esc(f.studio_name || 'Artist')}${f.artist_location ? ` · ${esc(f.artist_location)}` : ''}</div></div></div>
+            <hr class="divider" style="margin:14px 0">
+            <div class="row row--between"><span class="muted">Status</span><span class="pill pill--${f.status === 'available' ? 'open' : (f.status === 'claimed' ? 'pending' : (f.status === 'sold' ? 'completed' : 'closed'))}">${esc(status)}</span></div>
+            ${f.deposit_amount && f.available ? `<p class="small muted" style="margin-top:10px">Book a slot and pay the ${money(Math.min(f.deposit_amount, f.price))} deposit to claim it. The rest (${money(f.price - Math.min(f.deposit_amount, f.price))}) is settled after the session.</p>` : ''}
+            <div class="row" style="margin-top:14px">
+              ${f.available && canBook ? (f.accepting_clients ? `<a class="btn" href="${me ? `/book/${f.artist_id}?flash=${f.id}` : `/login?next=${encodeURIComponent(`/book/${f.artist_id}?flash=${f.id}`)}`}">Book this design</a>` : '<span class="muted small">This artist is not taking bookings right now.</span>') : ''}
+              ${me && !f.is_owner ? `<a class="btn btn--ghost" href="/messages/${f.artist_id}">Ask about it</a>` : ''}
+              ${shareButton({ title: `${f.title} by ${f.artist_name}`, text: `Flash by ${f.artist_name}: ${f.title}, ${money(f.price)} on Inkwell`, path: `/flash/${f.id}` })}
+            </div>
+          </div>
+          ${f.is_owner ? `
+          <div class="card">
+            <h3>Manage this design</h3>
+            <form class="form" data-edit-flash>${flashEditorHtml(f)}<div class="row row--between"><button class="btn btn--sm">Save</button><button type="button" class="btn btn--danger btn--sm" data-delete-flash ${f.status === 'claimed' ? 'disabled title="Cancel the booking first"' : ''}>Delete</button></div></form>
+            ${f.claims && f.claims.length ? `<h3 style="margin-top:18px">Bookings for this design</h3><div class="stack">${f.claims.map((c) => `<div class="row row--between small"><span>${esc(c.client_name)} · ${esc(fmtSlot(c.starts_at))}</span>${pill(c.status)}</div>`).join('')}</div>` : '<p class="small faint" style="margin-top:14px">No bookings yet.</p>'}
+          </div>` : ''}
+        </aside>
+      </div>`;
+    bindShare();
+    const edit = $('[data-edit-flash]');
+    if (edit) {
+      edit.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        try { await api.put(`/api/flash/${f.id}`, flashPayload(edit)); toast('Design updated'); viewFlash(id); } catch (err) { handleError(err, $('.error', edit)); }
+      });
+      $('[data-delete-flash]').addEventListener('click', async () => {
+        if (!confirm('Delete this design?')) return;
+        try { await api.del(`/api/flash/${f.id}`); toast('Design deleted'); navigate('/dashboard?tab=flash'); } catch (err) { handleError(err); }
+      });
     }
   }
 
@@ -2345,6 +2484,7 @@
       ${portfolioShareCard(artist)}
       <div class="tabs" style="margin-top:24px">
         <button data-tab="galleries" class="${tab === 'galleries' ? 'active' : ''}">Galleries</button>
+        <button data-tab="flash" class="${tab === 'flash' ? 'active' : ''}">Flash</button>
         <button data-tab="availability" class="${tab === 'availability' ? 'active' : ''}">Availability</button>
         <button data-tab="bookings" class="${tab === 'bookings' ? 'active' : ''}">Bookings${pending ? ` (${pending})` : ''}</button>
         <button data-tab="proposals" class="${tab === 'proposals' ? 'active' : ''}">Proposals</button>
@@ -2361,6 +2501,17 @@
     const embedCode = $('[data-embed]');
     if (embedCode) embedCode.addEventListener('focus', (e) => e.target.select());
       $$('[data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
+      if (name === 'flash') {
+        panel.innerHTML = '<div class="loading">Loading</div>';
+        api.get('/api/flash', { mine: '1', limit: 60 }).then(({ flash }) => {
+          panel.innerHTML = `
+            <div class="section__head"><h2>Flash</h2><button class="btn btn--sm" data-new-flash>New flash design</button></div>
+            <p class="small muted" style="margin-top:-6px">Pre-drawn designs at a fixed price. Clients book them straight from the <a class="link" href="/flash">flash board</a> and your profile; one-off designs leave the board when claimed.</p>
+            ${flash.length ? `<div class="grid-art">${flash.map((f) => flashCard(f, { manage: true })).join('')}</div>` : '<div class="empty"><h3>No flash yet</h3><p>Post a design with a price and let clients claim it.</p></div>'}`;
+          $('[data-new-flash]', panel).addEventListener('click', () => newFlashModal((f) => navigate(`/flash/${f.id}`)));
+        }).catch((err) => handleError(err));
+        return;
+      }
       if (name === 'galleries') {
         panel.innerHTML = `
           <div class="section__head"><h2>Galleries</h2><button class="btn btn--sm" data-new-gallery>New gallery</button></div>
@@ -3112,6 +3263,8 @@
     [/^\/artists$/, (m, p) => viewArtists(p)],
     [/^\/artists\/(\d+)$/, (m) => viewArtist(m[1])],
     [/^\/galleries\/(\d+)$/, (m) => viewGallery(m[1])],
+    [/^\/flash$/, (_m, params) => viewFlashBoard(params)],
+    [/^\/flash\/(\d+)$/, (m) => viewFlash(m[1])],
     [/^\/collections$/, () => viewCollections()],
     [/^\/c\/([A-Za-z0-9_-]+)$/, (m) => viewCollection(m[1])],
     [/^\/requests$/, (m, p) => viewRequests(p)],

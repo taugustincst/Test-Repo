@@ -142,7 +142,7 @@ const templates = {
       to: appt.artist_id, subject: `New booking request from ${appt.client_name}`,
       title: 'New booking request',
       paragraphs: [
-        `${appt.client_name} requested ${fmtWhen(appt.starts_at)} to ${new Date(appt.ends_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}.`,
+        `${appt.client_name} requested ${fmtWhen(appt.starts_at)} to ${new Date(appt.ends_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}${appt.flash_title ? ` for your flash design "${appt.flash_title}" (${money(appt.flash_price)})` : ''}.`,
         appt.note ? `Their note: "${appt.note}"` : 'They did not leave a note.',
         appt.deposit_amount ? `A ${money(appt.deposit_amount)} deposit is due from the client.` : 'No deposit is required for this booking.',
       ],

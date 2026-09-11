@@ -351,6 +351,24 @@ CREATE TABLE IF NOT EXISTS consent_forms (
   signed_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS flash_designs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  artist_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  description TEXT DEFAULT '',
+  image_url TEXT NOT NULL,
+  thumb_url TEXT,
+  width INTEGER,
+  height INTEGER,
+  style TEXT DEFAULT '',
+  size_label TEXT DEFAULT '',
+  price INTEGER NOT NULL DEFAULT 0,
+  repeatable INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'available' CHECK (status IN ('available', 'claimed', 'sold', 'hidden')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_artworks_artist ON artworks(artist_id);
 CREATE INDEX IF NOT EXISTS idx_artworks_gallery ON artworks(gallery_id);
 CREATE INDEX IF NOT EXISTS idx_comments_artwork ON comments(artwork_id);
@@ -375,6 +393,8 @@ CREATE INDEX IF NOT EXISTS idx_collections_user ON collections(user_id, updated_
 CREATE INDEX IF NOT EXISTS idx_collection_items_artwork ON collection_items(artwork_id);
 CREATE INDEX IF NOT EXISTS idx_review_votes_review ON review_votes(review_id);
 CREATE INDEX IF NOT EXISTS idx_busy_events_time ON busy_events(artist_id, starts_at, ends_at);
+CREATE INDEX IF NOT EXISTS idx_flash_artist ON flash_designs(artist_id, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_flash_status ON flash_designs(status, created_at);
 `;
 
 db.exec(SCHEMA);
@@ -411,6 +431,7 @@ ensureColumn('artist_profiles', 'consent_terms', 'TEXT');
 ensureColumn('artist_profiles', 'require_consent', 'INTEGER NOT NULL DEFAULT 0');
 ensureColumn('artist_profiles', 'consent_photo_ask', 'INTEGER NOT NULL DEFAULT 1');
 ensureColumn('artist_profiles', 'consent_min_age', 'INTEGER NOT NULL DEFAULT 18');
+ensureColumn('appointments', 'flash_id', 'INTEGER REFERENCES flash_designs(id) ON DELETE SET NULL');
 // Indexes on migrated columns must come after the columns exist.
 db.exec('CREATE INDEX IF NOT EXISTS idx_users_suspended ON users(suspended_at)');
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_calendar_token ON users(calendar_token)');

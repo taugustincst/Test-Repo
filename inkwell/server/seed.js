@@ -489,6 +489,29 @@ function seed() {
       }
     });
 
+    // Flash: pre-drawn designs at fixed prices for five artists; a couple already claimed or sold.
+    const insertFlash = db.prepare(`INSERT INTO flash_designs (artist_id, title, description, image_url, style, size_label, price, repeatable, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', ?))`);
+    const FLASH = [
+      [0, 'Moth & Moon', 'Fine dotwork moth under a crescent. Forearm or calf.', 'Dotwork', 'Small (2-4 in)', 220, 0, 'available'],
+      [0, 'Thorn Band', 'Wrap-around blackwork band, sized to the arm on the day.', 'Blackwork', 'Medium (4-6 in)', 340, 1, 'available'],
+      [0, 'Ornamental Dagger', 'One-off. Sternum or spine.', 'Ornamental', 'Large (6-10 in)', 520, 0, 'claimed'],
+      [1, 'Panther Head', 'Classic bold panther, black and red.', 'Traditional', 'Medium (4-6 in)', 300, 1, 'available'],
+      [1, 'Swallow Pair', 'Two swallows, mirrored. Perfect for collarbones.', 'Traditional', 'Small (2-4 in)', 260, 1, 'available'],
+      [1, 'Ship in Storm', 'One-off chest piece.', 'Traditional', 'Extra large', 900, 0, 'sold'],
+      [2, 'Koi Fragment', 'Single koi with waves, one sitting.', 'Japanese', 'Medium (4-6 in)', 380, 0, 'available'],
+      [3, 'Fine Line Peony', 'Delicate single-needle peony.', 'Fine Line', 'Small (2-4 in)', 190, 1, 'available'],
+      [3, 'Tiny Moon Phases', 'Five phases in a row, anywhere it fits.', 'Fine Line', 'Tiny (under 2 in)', 120, 1, 'available'],
+      [4, 'Wolf Portrait', 'Black and grey realism, one-off.', 'Realism', 'Large (6-10 in)', 650, 0, 'available'],
+    ];
+    const flashIds = [];
+    FLASH.forEach(([ai, title, desc, style, size, price, repeatable, status], i) => {
+      const url = writeSvg(`seed-flash-${i}.svg`, makeSvg(style, 40 + i));
+      flashIds.push(Number(insertFlash.run(artistIds[ai], title, desc, url, style, size, price, repeatable, status, `-${30 - i * 2} days`).lastInsertRowid));
+    });
+    // The claimed dagger belongs to Jordan's upcoming booking with Mara; the sold ship was Kwame's completed session with Diego.
+    db.prepare(`UPDATE appointments SET flash_id = ?, price = 520 WHERE id = (SELECT id FROM appointments WHERE artist_id = ? AND client_id = ? AND status IN ('pending', 'confirmed') ORDER BY starts_at LIMIT 1)`).run(flashIds[2], artistIds[0], clientIds[0]);
+    db.prepare(`UPDATE appointments SET flash_id = ? WHERE id = (SELECT id FROM appointments WHERE artist_id = ? AND status = 'completed' ORDER BY starts_at DESC LIMIT 1)`).run(flashIds[5], artistIds[1]);
+
     // Boards: Jordan keeps two reference boards; one is shared by link.
     const insertBoard = db.prepare('INSERT INTO collections (user_id, title, description, token, is_public, created_at, updated_at) VALUES (?, ?, ?, ?, ?, datetime(\'now\', ?), datetime(\'now\', ?))');
     const insertBoardItem = db.prepare('INSERT OR IGNORE INTO collection_items (collection_id, artwork_id, note, created_at) VALUES (?, ?, ?, datetime(\'now\', ?))');

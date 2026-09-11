@@ -8,6 +8,7 @@ const mailer = require('../mailer');
 const analytics = require('../analytics');
 const calendar = require('../calendar');
 const consent = require('../consent');
+const flash = require('./flash');
 
 const router = express.Router();
 
@@ -40,20 +41,22 @@ const APPT_SELECT = `
          a.name AS artist_name, a.avatar_url AS artist_avatar_url,
          c.name AS client_name, c.avatar_url AS client_avatar_url,
          p.studio_name, a.location AS artist_location, r.title AS request_title,
+         f.title AS flash_title, f.thumb_url AS flash_thumb_url, f.image_url AS flash_image_url, f.price AS flash_price,
          (SELECT rv.id FROM reviews rv WHERE rv.appointment_id = ap.id) AS review_id
   FROM appointments ap
   JOIN users a ON a.id = ap.artist_id
   JOIN users c ON c.id = ap.client_id
   LEFT JOIN artist_profiles p ON p.user_id = ap.artist_id
   LEFT JOIN tattoo_requests r ON r.id = ap.request_id
+  LEFT JOIN flash_designs f ON f.id = ap.flash_id
 `;
 const getAppointment = db.prepare(`${APPT_SELECT} WHERE ap.id = ?`);
 const appointmentsForUser = db.prepare(
   `${APPT_SELECT} WHERE ap.artist_id = ? OR ap.client_id = ? ORDER BY ap.starts_at ASC`,
 );
 const insertAppointment = db.prepare(`
-  INSERT INTO appointments (artist_id, client_id, request_id, starts_at, ends_at, note, deposit_amount)
-  VALUES (?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO appointments (artist_id, client_id, request_id, starts_at, ends_at, note, deposit_amount, flash_id, price)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 const setStatus = db.prepare('UPDATE appointments SET status = ? WHERE id = ?');
 const setPrice = db.prepare('UPDATE appointments SET price = ? WHERE id = ?');
@@ -195,11 +198,20 @@ router.post('/appointments', requireRole('client'), (req, res) => {
     if (owner && owner.client_id === req.user.id) requestId = Number(body.request_id);
   }
 
-  const deposit = artist.deposit_amount || 0;
+  // A flash design can be attached: it fixes the session price and takes one-off designs off the board.
+  let flashRow = null;
+  if (body.flash_id) {
+    flashRow = flash.getFlash.get(body.flash_id);
+    if (!flashRow || flashRow.artist_id !== artist.id) return res.status(404).json({ error: 'That flash design is not offered by this artist.' });
+    if (flashRow.status !== 'available') return res.status(409).json({ error: 'That design has just been claimed by someone else.' });
+  }
+
+  const deposit = flashRow ? Math.min(artist.deposit_amount || 0, flashRow.price) : (artist.deposit_amount || 0);
   const appointment = db.transaction(() => {
     const info = insertAppointment.run(
-      artist.id, req.user.id, requestId, slot.starts_at, slot.ends_at, String(body.note || '').slice(0, 2000), deposit,
+      artist.id, req.user.id, requestId, slot.starts_at, slot.ends_at, String(body.note || '').slice(0, 2000), deposit, flashRow ? flashRow.id : null, flashRow ? flashRow.price : null,
     );
+    if (flashRow) flash.claim(flashRow.id);
     const appt = getAppointment.get(info.lastInsertRowid);
     ledger.createPending({ appointment: appt, kind: 'deposit', amount: deposit, note: 'Booking deposit' });
     return appt;
@@ -241,7 +253,8 @@ router.post('/appointments/:id/:action', requireAuth, async (req, res) => {
       return res.status(400).json({ error: `${appt.client_name} has not signed the consent form. Ask them to sign it, or complete anyway.`, consent_missing: true });
     }
     // The artist can record the session total; the remainder after the deposit becomes a balance payment.
-    const raw = (req.body || {}).price;
+    // Flash bookings default to the design's price.
+    const raw = (req.body || {}).price === undefined || (req.body || {}).price === '' ? (appt.flash_id ? appt.price : undefined) : (req.body || {}).price;
     if (raw !== undefined && raw !== null && raw !== '') {
       const price = Number(raw);
       if (!Number.isFinite(price) || price < 0) return res.status(400).json({ error: 'Enter a valid session total.' });
@@ -261,6 +274,10 @@ router.post('/appointments/:id/:action', requireAuth, async (req, res) => {
   }
 
   const updated = getAppointment.get(appt.id);
+  if (updated.flash_id) {
+    if (action === 'complete') flash.sold(updated.flash_id);
+    else if (action === 'cancel' || action === 'decline') flash.release(updated.flash_id);
+  }
   await ledger.settle(updated, action, actorRole);
   const recipient = isArtist ? updated.client_id : updated.artist_id;
   mailer.notify({ to: recipient, ...mailer.templates.bookingStatus(updated, action, req.user.name, action === 'confirm' ? calendar.links(updated, recipient) : null) });
