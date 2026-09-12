@@ -262,6 +262,38 @@ const templates = {
       cta: { label: 'View booking', url: `${APP_URL}/appointments` },
     };
   },
+  waitlistJoined(entry) {
+    return {
+      to: entry.artist_id, subject: `${entry.client_name} joined your waitlist`,
+      title: 'New on your waitlist',
+      paragraphs: [`${entry.client_name} wants a session with you${entry.flash_title ? ` for your flash design "${entry.flash_title}"` : ''}${entry.from_date || entry.to_date ? ` between ${entry.from_date || 'now'} and ${entry.to_date || 'any time'}` : ''}.${entry.note ? ` Their note: "${entry.note}"` : ''}`, 'They will be told automatically when one of your slots frees up, or you can invite them from your dashboard.'],
+      cta: { label: 'See your waitlist', url: `${APP_URL}/dashboard?tab=waitlist` },
+    };
+  },
+  waitlistSlot(entry, startsAt) {
+    return {
+      to: entry.client_id, subject: `A slot with ${entry.artist_name} just opened up`,
+      title: 'A slot opened up',
+      paragraphs: [`${fmtWhen(startsAt)} with ${entry.artist_name} is free again. You are on the waitlist, so you are hearing first. It goes to whoever books it.`],
+      cta: { label: 'Book it', url: `${APP_URL}/book/${entry.artist_id}?date=${String(startsAt).slice(0, 10)}${entry.flash_id ? `&flash=${entry.flash_id}` : ''}` },
+    };
+  },
+  waitlistOpen(entry) {
+    return {
+      to: entry.client_id, subject: `${entry.artist_name} is taking bookings again`,
+      title: 'Books are open',
+      paragraphs: [`${entry.artist_name} reopened their books. You are on the waitlist, so you are hearing first.`],
+      cta: { label: 'Book a session', url: `${APP_URL}/book/${entry.artist_id}${entry.flash_id ? `?flash=${entry.flash_id}` : ''}` },
+    };
+  },
+  waitlistInvite(entry, message) {
+    return {
+      to: entry.client_id, subject: `${entry.artist_name} has time for you`,
+      title: `${entry.artist_name.split(' ')[0]} invited you to book`,
+      paragraphs: [`${entry.artist_name} has room for your session${entry.flash_title ? ` (${entry.flash_title})` : ''} and invited you from the waitlist.`, message ? `"${message}"` : null].filter(Boolean),
+      cta: { label: 'Pick a slot', url: `${APP_URL}/book/${entry.artist_id}${entry.flash_id ? `?flash=${entry.flash_id}` : ''}` },
+    };
+  },
   consentSigned(appt, form) {
     return {
       to: appt.artist_id, subject: `${appt.client_name} signed the consent form`,

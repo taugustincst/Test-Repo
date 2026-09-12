@@ -9,6 +9,7 @@ const analytics = require('../analytics');
 const calendar = require('../calendar');
 const consent = require('../consent');
 const flash = require('./flash');
+const waitlist = require('../waitlist');
 
 const router = express.Router();
 
@@ -217,6 +218,7 @@ router.post('/appointments', requireRole('client'), (req, res) => {
     return appt;
   })();
 
+  waitlist.markBooked(req.user.id, artist.id);
   const [withPayments] = ledger.attachPayments([appointment]);
   mailer.notify(mailer.templates.bookingRequested(withPayments));
   const depositPayment = withPayments.payments.find((p) => p.kind === 'deposit');
@@ -278,6 +280,8 @@ router.post('/appointments/:id/:action', requireAuth, async (req, res) => {
     if (action === 'complete') flash.sold(updated.flash_id);
     else if (action === 'cancel' || action === 'decline') flash.release(updated.flash_id);
   }
+  // A freed future slot goes to the waitlist first.
+  if ((action === 'cancel' || action === 'decline') && updated.starts_at > localNow()) waitlist.slotFreed(updated.artist_id, updated.starts_at);
   await ledger.settle(updated, action, actorRole);
   const recipient = isArtist ? updated.client_id : updated.artist_id;
   mailer.notify({ to: recipient, ...mailer.templates.bookingStatus(updated, action, req.user.name, action === 'confirm' ? calendar.links(updated, recipient) : null) });

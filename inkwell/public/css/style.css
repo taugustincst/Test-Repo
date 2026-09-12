@@ -647,3 +647,7 @@ a.ctx__item:hover { border-color: var(--line-strong); }
 .appt__flash img { width: 32px; height: 32px; border-radius: 6px; object-fit: cover; }
 .appt__flash strong { color: var(--text); }
 @media (max-width: 760px) { .flash.two-col { grid-template-columns: 1fr; } }
+
+/* Waitlist */
+.waitlist-state { display: inline-flex; align-items: center; gap: 8px; font-size: 0.9rem; color: var(--green); }
+.waitlist-entry .tag + .tag { margin-left: 6px; }
