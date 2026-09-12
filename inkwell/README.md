@@ -11,6 +11,16 @@ straight from an artist's published hours.
 - Explore feed with style filters, search, and "recent" or "most loved" sorting.
 - Lightbox view with likes and comments. Anyone signed in can follow an artist.
 
+**Flash designs**
+- Artists post pre-drawn designs at a fixed price with style and size, one-off or repeatable, and
+  can hide or edit them. A public board at `/flash` lists what is available across artists with
+  style, price and sort filters; each artist's profile shows their flash, and the dashboard has a
+  Flash tab with claims per design.
+- Clients claim a design by booking a slot with it attached: the session price is fixed to the
+  flash price, the deposit is capped at it, and the booking request tells the artist which design.
+  One-off designs leave the board while the booking is alive, come back if it is cancelled or
+  declined, and are marked sold when the session completes.
+
 **Finding clients**
 - Clients post tattoo requests: idea, style, placement, size, budget, reference image.
 - Artists browse open requests and send proposals with a quote and estimated hours.
@@ -295,6 +305,7 @@ All endpoints live under `/api` and return JSON. Authentication is a session coo
 | Galleries    | `GET /feed`, `POST /galleries`, `GET`/`PUT`/`DELETE /galleries/:id`, `POST /galleries/:id/artworks` |
 | Artworks     | `GET`/`PUT`/`DELETE /artworks/:id`, `POST /artworks/:id/like`, `GET`/`POST /artworks/:id/comments`, `DELETE /comments/:id` |
 | Requests     | `GET`/`POST /requests`, `GET`/`DELETE /requests/:id`, `PUT /requests/:id/status`, `POST /requests/:id/proposals`, `POST /requests/proposals/:id/accept|decline` |
+| Flash        | `GET /flash?style=&artist_id=&max_price=&sort=newest|price_asc|price_desc&mine=1`, `GET /flash/:id`, `POST /flash` (multipart `image`), `PUT`/`DELETE /flash/:id`; `POST /appointments` accepts `flash_id` |
 | Booking      | `GET /artists/:id/availability`, `PUT /artists/me/availability`, `GET /artists/:id/slots?date=`, `GET`/`POST /appointments`, `GET /appointments/:id`, `GET /appointments/:id/calendar.ics`, `POST /appointments/:id/confirm|decline|complete|cancel` (`complete` accepts `price`) |
 | Calendar     | `GET /calendar` (feed links, busy status), `POST /calendar/reset`, `PUT`/`DELETE /calendar/busy`, `POST /calendar/busy/sync`; at the root: `GET /calendar/:token.ics` |
 | Consent      | `GET`/`PUT /consent/settings` (artist), `GET`/`POST /appointments/:id/consent`, `GET /appointments/:id/consent/signature.png` |
@@ -337,7 +348,7 @@ inkwell/
     calendar.js     iCalendar feeds and files, add-to-calendar links, external busy-calendar import
     consent.js      Consent form definition, validation and signature handling
     seed.js         Demo data and SVG artwork generator
-    routes/         auth, artists, galleries, requests, bookings, payments, messages, collections, share, calendar, consent, reviews, reports, admin, push, analytics
+    routes/         auth, artists, galleries, flash, requests, bookings, payments, messages, collections, share, calendar, consent, reviews, reports, admin, push, analytics
   scripts/          backup.js, make-admin.js
   Dockerfile, docker-compose.yml, .env.example
   public/

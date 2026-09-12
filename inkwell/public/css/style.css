@@ -637,3 +637,13 @@ a.ctx__item:hover { border-color: var(--line-strong); }
   .consent__flags { background: #fff3f0; }
   .muted, .small, .faint { color: #333 !important; }
 }
+
+/* Flash */
+.flash-card__price { color: var(--accent); white-space: nowrap; }
+.flash__image img { width: 100%; border-radius: var(--radius); border: 1px solid var(--line); display: block; }
+.flash__price { font-size: 1.4rem; color: var(--accent); }
+.flash-pick .board__cover { width: 72px; }
+.appt__flash { display: inline-flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 0.85rem; color: var(--text-muted); }
+.appt__flash img { width: 32px; height: 32px; border-radius: 6px; object-fit: cover; }
+.appt__flash strong { color: var(--text); }
+@media (max-width: 760px) { .flash.two-col { grid-template-columns: 1fr; } }
