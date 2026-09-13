@@ -46,6 +46,18 @@ straight from an artist's published hours.
 - Appointment times are wall-clock times in the server's timezone (set `TZ`); calendar files carry
   `INKWELL_TIMEZONE` (defaults to the server zone).
 
+**Stencil library**
+- Every gallery piece and flash design an artist uploads is traced into a line stencil in the
+  background: edges are pulled out of the image (Sobel gradient, adaptive threshold), thickened
+  and saved as black lines on a transparent PNG. Pieces that predate the library are picked up by
+  the scheduler a batch at a time (`INKWELL_STENCIL_BACKFILL` per run), or all at once with
+  "Trace missing pieces". Artists can also drop any image straight into the library.
+- The dashboard Stencils tab filters by source and favourites, renames, favourites, re-traces at
+  five detail levels (bold outlines only through fine lines and texture) and deletes. Deleting a
+  piece removes its stencil.
+- Download at real size: width or height in centimetres at 300 dpi (up to 6000 px), optionally
+  mirrored for thermal transfer paper, on white or transparent.
+
 **Waitlist**
 - Clients join an artist's waitlist from the profile or booking page, optionally for a date window
   or a specific flash design, with a note. Artists see their queue on a dashboard tab and can
@@ -296,6 +308,7 @@ put uploads on object storage behind the same `/uploads` path and rate limit at 
 | `INKWELL_REVIEW_REMINDER_DAYS` | `2` | Days after a completed session before the review reminder |
 | `INKWELL_TIMEZONE` | server zone | IANA timezone written into calendar files |
 | `INKWELL_BUSY_CALENDAR_REFRESH_MINUTES` | `30` | How often artists' external busy calendars are re-fetched |
+| `INKWELL_STENCIL_BACKFILL` | `20` | Pieces without a stencil traced per scheduler run |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | generated | Web push keys; generated and stored in the database if unset |
 | `VAPID_CONTACT`       | `mailto:hello@inkwell.local` | Contact for push services |
 | `FCM_SERVICE_ACCOUNT_JSON` | unset         | Firebase service account (JSON or path) for native push |
@@ -317,6 +330,7 @@ All endpoints live under `/api` and return JSON. Authentication is a session coo
 | Flash        | `GET /flash?style=&artist_id=&max_price=&sort=newest|price_asc|price_desc&mine=1`, `GET /flash/:id`, `POST /flash` (multipart `image`), `PUT`/`DELETE /flash/:id`; `POST /appointments` accepts `flash_id` |
 | Booking      | `GET /artists/:id/availability`, `PUT /artists/me/availability`, `GET /artists/:id/slots?date=`, `GET`/`POST /appointments`, `GET /appointments/:id`, `GET /appointments/:id/calendar.ics`, `POST /appointments/:id/confirm|decline|complete|cancel` (`complete` accepts `price`) |
 | Calendar     | `GET /calendar` (feed links, busy status), `POST /calendar/reset`, `PUT`/`DELETE /calendar/busy`, `POST /calendar/busy/sync`; at the root: `GET /calendar/:token.ics` |
+| Stencils     | `GET /stencils?source=artwork|flash|upload&favorites=1`, `POST /stencils` (multipart `image`, `title`, `detail`), `POST /stencils/backfill`, `GET`/`PUT`/`DELETE /stencils/:id` (`title`, `favorite`, `detail` re-traces), `POST /stencils/:id/regenerate`, `GET /stencils/:id/print.png?width_cm=&height_cm=&mirror=1&transparent=1&dpi=` (artists) |
 | Waitlist     | `GET /waitlist` (mine, or the artist's queue), `GET /waitlist/artists/:id`, `POST /waitlist`, `DELETE /waitlist/:id`, `POST /waitlist/:id/invite` (artist) |
 | Consent      | `GET`/`PUT /consent/settings` (artist), `GET`/`POST /appointments/:id/consent`, `GET /appointments/:id/consent/signature.png` |
 | Payments     | `GET /payments/config`, `GET /payments`, `POST /payments/:id/pay` (demo card), `POST /payments/:id/checkout` and `POST /payments/:id/confirm` (Stripe) |
@@ -354,10 +368,11 @@ inkwell/
     analytics.js    View tracking and the artist analytics report
     messaging.js    Live message events (SSE), reply-time stat, booking context for threads
     share.js        Share cards (sharp), QR codes, embeddable portfolio widget
-    reminders.js    Scheduled nudges: session reminders, confirmation nudges, review reminders, busy-calendar refresh
+    reminders.js    Scheduled nudges: session reminders, confirmation nudges, review reminders, busy-calendar refresh, stencil backfill
     calendar.js     iCalendar feeds and files, add-to-calendar links, external busy-calendar import
     consent.js      Consent form definition, validation and signature handling
     waitlist.js     Waitlist queue, slot-freed and books-open notifications, artist invites
+    stencils.js     Stencil tracing (sharp + Sobel), passive queue and backfill, library routes, print-size export
     seed.js         Demo data and SVG artwork generator
     routes/         auth, artists, galleries, flash, requests, bookings, payments, messages, collections, share, calendar, consent, reviews, reports, admin, push, analytics
   scripts/          backup.js, make-admin.js

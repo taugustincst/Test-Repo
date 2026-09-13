@@ -228,7 +228,7 @@ test('session reminders: day before, two hours before, once each, honouring the 
   assert.equal(reminders.sendSessionReminders(), 0);
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM appointment_reminders WHERE appointment_id = ?').get(cancelled.id).n, 0);
   const out = await reminders.runAll();
-  assert.deepEqual(Object.keys(out).sort(), ['busy_calendars', 'confirmation_nudges', 'review_reminders', 'session_reminders']);
+  assert.deepEqual(Object.keys(out).sort(), ['busy_calendars', 'confirmation_nudges', 'review_reminders', 'session_reminders', 'stencils']);
 });
 
 test('busy calendar import blocks slots and bookings; validation, errors and removal', async () => {

@@ -384,6 +384,27 @@ CREATE TABLE IF NOT EXISTS waitlist (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS stencils (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  artist_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  source_type TEXT NOT NULL CHECK (source_type IN ('artwork', 'flash', 'upload')),
+  source_id INTEGER NOT NULL,
+  source_url TEXT NOT NULL,
+  title TEXT NOT NULL DEFAULT 'Untitled',
+  detail INTEGER NOT NULL DEFAULT 3,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'ready', 'failed')),
+  error TEXT,
+  image_url TEXT,
+  thumb_url TEXT,
+  width INTEGER,
+  height INTEGER,
+  ink REAL,
+  favorite INTEGER NOT NULL DEFAULT 0,
+  generated_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (source_type, source_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_artworks_artist ON artworks(artist_id);
 CREATE INDEX IF NOT EXISTS idx_artworks_gallery ON artworks(gallery_id);
 CREATE INDEX IF NOT EXISTS idx_comments_artwork ON comments(artwork_id);
@@ -412,6 +433,8 @@ CREATE INDEX IF NOT EXISTS idx_flash_artist ON flash_designs(artist_id, status, 
 CREATE INDEX IF NOT EXISTS idx_flash_status ON flash_designs(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_waitlist_artist ON waitlist(artist_id, status, created_at);
 CREATE INDEX IF NOT EXISTS idx_waitlist_client ON waitlist(client_id, status);
+CREATE INDEX IF NOT EXISTS idx_stencils_artist ON stencils(artist_id, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_stencils_status ON stencils(status, id);
 `;
 
 db.exec(SCHEMA);
