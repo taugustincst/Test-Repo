@@ -171,6 +171,7 @@ function createApp(options = {}) {
   app.use('/api/messages', require('./routes/messages'));
   app.use('/api/collections', require('./routes/collections'));
   app.use('/api/flash', require('./routes/flash'));
+  app.use('/api/waitlist', require('./waitlist').router);
   const calendarRoutes = require('./routes/calendar');
   app.use('/api/calendar', calendarRoutes.api);
   app.use(calendarRoutes.pub); // /calendar/:token.ics

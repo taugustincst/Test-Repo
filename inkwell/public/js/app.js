@@ -629,6 +629,7 @@
         <div class="profile-head__actions">
           ${isMe ? '<a class="btn btn--ghost" href="/dashboard">Manage studio</a><a class="btn btn--subtle" href="/settings">Edit profile</a>' : `
             <button class="btn btn--ghost" data-follow>${artist.is_following ? 'Following' : 'Follow'}</button>
+            <span data-waitlist-btn></span>
             <a class="btn btn--ghost" href="/messages/${artist.id}">Message</a>
             ${!me || me.role === 'client' ? `<a class="btn" href="/book/${artist.id}">Book a session</a>` : ''}
             ${me ? '<button class="link small" data-report-user>Report</button>' : ''}`}
@@ -651,6 +652,7 @@
       <section class="section" data-reviews></section>`;
     reviewsSection($('[data-reviews]'), artist, reviews, () => viewArtist(id));
     bindShare();
+    renderWaitlistButton($('[data-waitlist-btn]'), artist);
     api.get('/api/flash', { artist_id: artist.id, limit: 12 }).then(({ flash }) => {
       const el = $('[data-flash-section]');
       if (!el || !flash.length) return;
@@ -971,9 +973,10 @@
       days.push(d);
     }
     const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    let selectedDate = days.find((d) => openDays.has(d.getDay()));
+    const wantedDate = params.get('date') || '';
+    let selectedDate = days.find((d) => iso(d) === wantedDate && openDays.has(d.getDay())) || days.find((d) => openDays.has(d.getDay()));
     let selectedSlot = null;
-    let autoAdvancing = true;
+    let autoAdvancing = !wantedDate;
 
     main.innerHTML = `
       <div class="two-col">
@@ -989,6 +992,7 @@
             </div>
             <h3 style="margin-top:20px">Available times <span class="muted small">(${avail.session_minutes} minute sessions)</span></h3>
             <div class="slots" data-slots><div class="loading">Loading</div></div>
+            <div class="row" style="margin-top:14px"><span class="small muted">Nothing that works?</span><span data-waitlist-btn></span></div>
           </div>
           <form class="card form" data-form style="margin-top:14px">
             <div class="error" hidden></div>
@@ -1018,6 +1022,7 @@
         </aside>
       </div>`;
 
+    renderWaitlistButton($('[data-waitlist-btn]'), artist, { flash: flashDesign });
     if (!openDays.size) return;
     const slotsEl = $('[data-slots]');
     const summary = $('[data-summary]');
@@ -1230,16 +1235,102 @@
       <section><div class="section__head"><h2>Upcoming</h2><span class="muted small">${upcoming.filter((a) => a.status === 'pending').length} pending</span></div>
         <div class="stack" data-upcoming>${upcoming.length ? upcoming.map(apptCard).join('') : `<div class="empty"><h3>Nothing scheduled</h3><p>${isArtist ? 'When clients request a session it will show up here.' : 'Browse artists and book a session.'}</p></div>`}</div>
       </section>
+      ${!isArtist ? '<section class="section" data-waitlist-section></section>' : ''}
       <section class="section"><div class="section__head"><h2>Past &amp; closed</h2></div>
         <div class="stack">${past.length ? past.map(apptCard).join('') : '<p class="faint">No history yet.</p>'}</div>
       </section>`;
     bindApptActions(main, viewAppointments);
+    renderClientWaitlist($('[data-waitlist-section]'));
     const wanted = params && params.get('review');
     if (wanted && !isArtist) {
       const appt = list.find((a) => String(a.id) === String(wanted));
       history.replaceState({}, '', '/appointments');
       if (appt && appt.status === 'completed' && !appt.review_id) reviewModal({ appointmentId: appt.id }, () => viewAppointments());
     }
+  }
+
+  /* ---------- waitlist ---------- */
+
+  function waitlistModal(artist, { flash = null } = {}, onDone) {
+    const today = new Date().toISOString().slice(0, 10);
+    const modal = openModal(`
+      <div class="modal__panel">
+        <div class="modal__head"><div><h3 style="margin:0">Join ${esc(artist.name.split(' ')[0])}'s waitlist</h3><p class="small muted" style="margin:4px 0 0">You hear first when a slot frees up or the books reopen. It goes to whoever books it.</p></div><button class="modal__close" data-close-modal aria-label="Close">×</button></div>
+        <form class="form modal__body" data-form>
+          <div class="error" hidden></div>
+          ${flash ? `<div class="board board--inline flash-pick" style="margin:0 0 12px"><div class="board__cover"><img src="${attr(flash.thumb_url || flash.image_url)}" alt=""></div><div class="board__body"><span class="small muted">For the flash design</span><strong>${esc(flash.title)}</strong></div></div>` : ''}
+          <div class="form-row">
+            <div class="field"><label>From (optional)</label><input name="from_date" type="date" min="${today}"></div>
+            <div class="field"><label>Until (optional)</label><input name="to_date" type="date" min="${today}"></div>
+          </div>
+          <div class="field"><label>Note for ${esc(artist.name.split(' ')[0])} (optional)</label><textarea name="note" maxlength="500" placeholder="What you want, how flexible you are, weekday evenings only..."></textarea></div>
+          <button class="btn btn--block">Join the waitlist</button>
+        </form>
+      </div>`, { small: true });
+    const form = $('[data-form]', modal);
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        const r = await api.post('/api/waitlist', { artist_id: artist.id, flash_id: flash ? flash.id : undefined, from_date: form.from_date.value || undefined, to_date: form.to_date.value || undefined, note: form.note.value });
+        closeModal(); toast('You are on the waitlist'); if (onDone) onDone(r.entry);
+      } catch (err) { handleError(err, $('.error', form)); }
+    });
+  }
+
+  /** Button for profiles and booking pages: join, or leave if already waiting. */
+  async function renderWaitlistButton(el, artist, { flash = null } = {}) {
+    if (!el) return;
+    const me = state.user;
+    if (!me || me.role !== 'client') return;
+    let entry = null;
+    try { ({ entry } = await api.get(`/api/waitlist/artists/${artist.id}`)); } catch { entry = null; }
+    const render = () => {
+      el.innerHTML = entry
+        ? `<span class="waitlist-state">On the waitlist${entry.status === 'notified' ? ' · you have been told about a slot' : ''} <button type="button" class="link small" data-leave-waitlist>Leave</button></span>`
+        : `<button type="button" class="btn btn--ghost btn--sm" data-join-waitlist>${artist.accepting_clients === false ? 'Join the waitlist' : 'Waitlist for cancellations'}</button>`;
+      const join = $('[data-join-waitlist]', el);
+      if (join) join.addEventListener('click', () => waitlistModal(artist, { flash }, (created) => { entry = created; render(); }));
+      const leave = $('[data-leave-waitlist]', el);
+      if (leave) leave.addEventListener('click', async () => { try { await api.del(`/api/waitlist/${entry.id}`); entry = null; toast('Left the waitlist'); render(); } catch (err) { handleError(err); } });
+    };
+    render();
+  }
+
+  function waitlistEntryHtml(w, { artistView }) {
+    const who = artistView ? { name: w.client_name, avatar: w.client_avatar_url, sub: w.client_location || 'Client' } : { name: w.artist_name, avatar: w.artist_avatar_url, sub: w.studio_name || 'Artist' };
+    const window = w.from_date || w.to_date ? `${w.from_date || 'Now'} → ${w.to_date || 'any time'}` : 'Any time';
+    return `<div class="card waitlist-entry" data-entry="${w.id}">
+      <div class="row">${avatar(who.avatar, who.name, 'avatar--sm')}<div>${artistView ? `<strong>${esc(who.name)}</strong>` : `<a href="/artists/${w.artist_id}"><strong>${esc(who.name)}</strong></a>`}<div class="small muted">${esc(who.sub)} · joined ${timeAgo(w.created_at)}</div></div></div>
+      <div class="small" style="margin-top:8px"><span class="tag">${esc(window)}</span>${w.flash_title ? `<a class="tag" href="/flash/${w.flash_id}">Flash: ${esc(w.flash_title)}</a>` : ''}${w.status === 'notified' ? `<span class="tag" title="${attr(w.notified_at || '')}">told ${w.notify_count}×, last ${timeAgo(w.notified_at)}</span>` : ''}</div>
+      ${w.note ? `<p class="small muted" style="margin:8px 0 0">${esc(w.note)}</p>` : ''}
+      <div class="row" style="margin-top:10px">
+        ${artistView ? `<button class="btn btn--sm" data-invite="${w.id}">Invite to book</button><a class="btn btn--ghost btn--sm" href="/messages/${w.client_id}">Message</a><button class="link small" data-remove-entry="${w.id}">Remove</button>` : `<a class="btn btn--sm" href="/book/${w.artist_id}${w.flash_id ? `?flash=${w.flash_id}` : ''}">Check for slots</a><button class="link small" data-remove-entry="${w.id}">Leave</button>`}
+      </div>
+    </div>`;
+  }
+
+  function bindWaitlistEntries(root, reload) {
+    $$('[data-remove-entry]', root).forEach((b) => b.addEventListener('click', async () => {
+      try { await api.del(`/api/waitlist/${b.dataset.removeEntry}`); toast('Removed'); reload(); } catch (err) { handleError(err); }
+    }));
+    $$('[data-invite]', root).forEach((b) => b.addEventListener('click', () => {
+      const modal = openModal(`<div class="modal__panel"><div class="modal__head"><h3 style="margin:0">Invite to book</h3><button class="modal__close" data-close-modal>×</button></div>
+        <form class="form modal__body" data-form><div class="error" hidden></div><div class="field"><label>Message (optional)</label><textarea name="message" maxlength="500" placeholder="I have Thursday afternoons open next month."></textarea></div><button class="btn btn--block">Send invite</button></form></div>`, { small: true });
+      $('[data-form]', modal).addEventListener('submit', async (e) => {
+        e.preventDefault();
+        try { await api.post(`/api/waitlist/${b.dataset.invite}/invite`, { message: e.target.message.value }); closeModal(); toast('Invite sent'); reload(); } catch (err) { handleError(err, $('.error', e.target)); }
+      });
+    }));
+  }
+
+  /** Client: waitlist section on the bookings page. */
+  async function renderClientWaitlist(el) {
+    if (!el) return;
+    let entries;
+    try { ({ entries } = await api.get('/api/waitlist')); } catch { el.innerHTML = ''; return; }
+    if (!entries.length) { el.innerHTML = ''; return; }
+    el.innerHTML = `<div class="section__head"><h2>Waitlists</h2><span class="muted small">You hear first when a slot frees up</span></div><div class="grid grid--2">${entries.map((w) => waitlistEntryHtml(w, { artistView: false })).join('')}</div>`;
+    bindWaitlistEntries(el, () => renderClientWaitlist(el));
   }
 
   /* ---------- flash designs ---------- */
@@ -1339,9 +1430,10 @@
             <div class="row" style="margin-top:10px">${avatar(f.artist_avatar_url, f.artist_name, 'avatar--sm')}<div><a href="/artists/${f.artist_id}"><strong>${esc(f.artist_name)}</strong></a><div class="small muted">${esc(f.studio_name || 'Artist')}${f.artist_location ? ` · ${esc(f.artist_location)}` : ''}</div></div></div>
             <hr class="divider" style="margin:14px 0">
             <div class="row row--between"><span class="muted">Status</span><span class="pill pill--${f.status === 'available' ? 'open' : (f.status === 'claimed' ? 'pending' : (f.status === 'sold' ? 'completed' : 'closed'))}">${esc(status)}</span></div>
-            ${f.deposit_amount && f.available ? `<p class="small muted" style="margin-top:10px">Book a slot and pay the ${money(Math.min(f.deposit_amount, f.price))} deposit to claim it. The rest (${money(f.price - Math.min(f.deposit_amount, f.price))}) is settled after the session.</p>` : ''}
+            ${f.deposit_amount && f.available && f.accepting_clients ? `<p class="small muted" style="margin-top:10px">Book a slot and pay the ${money(Math.min(f.deposit_amount, f.price))} deposit to claim it. The rest (${money(f.price - Math.min(f.deposit_amount, f.price))}) is settled after the session.</p>` : ''}
             <div class="row" style="margin-top:14px">
               ${f.available && canBook ? (f.accepting_clients ? `<a class="btn" href="${me ? `/book/${f.artist_id}?flash=${f.id}` : `/login?next=${encodeURIComponent(`/book/${f.artist_id}?flash=${f.id}`)}`}">Book this design</a>` : '<span class="muted small">This artist is not taking bookings right now.</span>') : ''}
+              ${canBook && me && (!f.available || !f.accepting_clients) && f.status !== 'sold' ? '<span data-waitlist-btn></span>' : ''}
               ${me && !f.is_owner ? `<a class="btn btn--ghost" href="/messages/${f.artist_id}">Ask about it</a>` : ''}
               ${shareButton({ title: `${f.title} by ${f.artist_name}`, text: `Flash by ${f.artist_name}: ${f.title}, ${money(f.price)} on Inkwell`, path: `/flash/${f.id}` })}
             </div>
@@ -1355,6 +1447,7 @@
         </aside>
       </div>`;
     bindShare();
+    renderWaitlistButton($('[data-waitlist-btn]'), { id: f.artist_id, name: f.artist_name, accepting_clients: f.accepting_clients }, { flash: f });
     const edit = $('[data-edit-flash]');
     if (edit) {
       edit.addEventListener('submit', async (e) => {
@@ -2489,6 +2582,7 @@
         <button data-tab="bookings" class="${tab === 'bookings' ? 'active' : ''}">Bookings${pending ? ` (${pending})` : ''}</button>
         <button data-tab="proposals" class="${tab === 'proposals' ? 'active' : ''}">Proposals</button>
         <button data-tab="payments" class="${tab === 'payments' ? 'active' : ''}">Payments</button>
+        <button data-tab="waitlist" class="${tab === 'waitlist' ? 'active' : ''}">Waitlist</button>
         <a href="/analytics" class="tab-link">Analytics ↗</a>
       </div>
       <div data-panel></div>`;
@@ -2501,6 +2595,18 @@
     const embedCode = $('[data-embed]');
     if (embedCode) embedCode.addEventListener('focus', (e) => e.target.select());
       $$('[data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
+      if (name === 'waitlist') {
+        panel.innerHTML = '<div class="loading">Loading</div>';
+        const load = () => api.get('/api/waitlist').then(({ entries }) => {
+          panel.innerHTML = `
+            <div class="section__head"><h2>Waitlist</h2><span class="muted small">${entries.length} waiting</span></div>
+            <p class="small muted" style="margin-top:-6px">Clients queue here from your profile. When a booked slot frees up the first five whose window covers it are told automatically; when you reopen your books everyone is. Invite anyone to book now.</p>
+            ${entries.length ? `<div class="grid grid--2">${entries.map((w) => waitlistEntryHtml(w, { artistView: true })).join('')}</div>` : '<div class="empty"><h3>Nobody waiting</h3><p>Clients can join from your profile, especially while your books are closed.</p></div>'}`;
+          bindWaitlistEntries(panel, load);
+        }).catch((err) => handleError(err));
+        load();
+        return;
+      }
       if (name === 'flash') {
         panel.innerHTML = '<div class="loading">Loading</div>';
         api.get('/api/flash', { mine: '1', limit: 60 }).then(({ flash }) => {

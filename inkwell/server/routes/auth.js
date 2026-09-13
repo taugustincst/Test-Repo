@@ -172,6 +172,10 @@ router.put('/me', requireAuth, (req, res) => {
     }
   })();
 
+  // Reopening the books tells everyone on the waitlist.
+  if (req.user.role === 'artist' && body.accepting_clients !== undefined && body.accepting_clients && !req.user.profile.accepting_clients) {
+    require('../waitlist').booksOpened(req.user.id);
+  }
   res.json({ user: withProfile(findById.get(req.user.id)) });
 });
 

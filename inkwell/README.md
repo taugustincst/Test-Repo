@@ -46,6 +46,15 @@ straight from an artist's published hours.
 - Appointment times are wall-clock times in the server's timezone (set `TZ`); calendar files carry
   `INKWELL_TIMEZONE` (defaults to the server zone).
 
+**Waitlist**
+- Clients join an artist's waitlist from the profile or booking page, optionally for a date window
+  or a specific flash design, with a note. Artists see their queue on a dashboard tab and can
+  invite anyone to book with a message.
+- When a booked future slot is cancelled or declined, the first five waiting clients whose window
+  covers that day are told, with a link straight to that day on the booking page; nobody is told
+  about more than one slot per twelve hours. Reopening the books tells everyone waiting. Booking
+  with the artist closes the client's entry.
+
 **Consent forms**
 - Before a session the client signs a consent form on any device: legal name and date of birth
   (checked against the artist's minimum age), a seven-question health questionnaire with details
@@ -308,6 +317,7 @@ All endpoints live under `/api` and return JSON. Authentication is a session coo
 | Flash        | `GET /flash?style=&artist_id=&max_price=&sort=newest|price_asc|price_desc&mine=1`, `GET /flash/:id`, `POST /flash` (multipart `image`), `PUT`/`DELETE /flash/:id`; `POST /appointments` accepts `flash_id` |
 | Booking      | `GET /artists/:id/availability`, `PUT /artists/me/availability`, `GET /artists/:id/slots?date=`, `GET`/`POST /appointments`, `GET /appointments/:id`, `GET /appointments/:id/calendar.ics`, `POST /appointments/:id/confirm|decline|complete|cancel` (`complete` accepts `price`) |
 | Calendar     | `GET /calendar` (feed links, busy status), `POST /calendar/reset`, `PUT`/`DELETE /calendar/busy`, `POST /calendar/busy/sync`; at the root: `GET /calendar/:token.ics` |
+| Waitlist     | `GET /waitlist` (mine, or the artist's queue), `GET /waitlist/artists/:id`, `POST /waitlist`, `DELETE /waitlist/:id`, `POST /waitlist/:id/invite` (artist) |
 | Consent      | `GET`/`PUT /consent/settings` (artist), `GET`/`POST /appointments/:id/consent`, `GET /appointments/:id/consent/signature.png` |
 | Payments     | `GET /payments/config`, `GET /payments`, `POST /payments/:id/pay` (demo card), `POST /payments/:id/checkout` and `POST /payments/:id/confirm` (Stripe) |
 | Messages     | `GET /messages?filter=all|unread|starred|archived&q=`, `GET /messages/unread`, `POST /messages/read-all`, `GET /messages/stream` (SSE), `GET /messages/:userId?before=`, `POST /messages/:userId` (JSON or multipart with `image`, `artwork_id`), `PATCH /messages/:userId` (`starred`, `muted`, `archived`), `POST /messages/:userId/read|unread`, `DELETE /messages/:userId/messages/:id`, `POST`/`DELETE /messages/:userId/block`, `GET`/`POST /messages/saved-replies`, `PUT`/`DELETE /messages/saved-replies/:id` |
@@ -347,6 +357,7 @@ inkwell/
     reminders.js    Scheduled nudges: session reminders, confirmation nudges, review reminders, busy-calendar refresh
     calendar.js     iCalendar feeds and files, add-to-calendar links, external busy-calendar import
     consent.js      Consent form definition, validation and signature handling
+    waitlist.js     Waitlist queue, slot-freed and books-open notifications, artist invites
     seed.js         Demo data and SVG artwork generator
     routes/         auth, artists, galleries, flash, requests, bookings, payments, messages, collections, share, calendar, consent, reviews, reports, admin, push, analytics
   scripts/          backup.js, make-admin.js

@@ -369,6 +369,21 @@ CREATE TABLE IF NOT EXISTS flash_designs (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS waitlist (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  client_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  artist_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  flash_id INTEGER REFERENCES flash_designs(id) ON DELETE SET NULL,
+  from_date TEXT,
+  to_date TEXT,
+  note TEXT DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'waiting' CHECK (status IN ('waiting', 'notified', 'booked', 'cancelled', 'removed')),
+  notified_at TEXT,
+  notify_count INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_artworks_artist ON artworks(artist_id);
 CREATE INDEX IF NOT EXISTS idx_artworks_gallery ON artworks(gallery_id);
 CREATE INDEX IF NOT EXISTS idx_comments_artwork ON comments(artwork_id);
@@ -395,6 +410,8 @@ CREATE INDEX IF NOT EXISTS idx_review_votes_review ON review_votes(review_id);
 CREATE INDEX IF NOT EXISTS idx_busy_events_time ON busy_events(artist_id, starts_at, ends_at);
 CREATE INDEX IF NOT EXISTS idx_flash_artist ON flash_designs(artist_id, status, created_at);
 CREATE INDEX IF NOT EXISTS idx_flash_status ON flash_designs(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_waitlist_artist ON waitlist(artist_id, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_waitlist_client ON waitlist(client_id, status);
 `;
 
 db.exec(SCHEMA);
