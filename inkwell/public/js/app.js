@@ -1516,7 +1516,7 @@
       $('[data-upload]', panel).addEventListener('click', () => stencilUploadModal(levels, (s) => patch(s)));
       $('[data-backfill]', panel).addEventListener('click', async (e) => {
         e.target.disabled = true; e.target.textContent = 'Tracing…';
-        try { const r = await api.post('/api/stencils/backfill'); toast(r.queued ? `Traced ${r.processed} of ${r.queued} pieces` : 'Every piece already has a stencil'); } catch (err) { handleError(err); }
+        try { const r = await api.post('/api/stencils/backfill'); toast(r.queued || r.refreshed ? `Traced ${r.processed} piece${r.processed === 1 ? '' : 's'}${r.refreshed ? ` (${r.refreshed} re-traced with the newer tracer)` : ''}` : 'Every piece already has a stencil'); } catch (err) { handleError(err); }
         load();
       });
       $$('[data-fav]', panel).forEach((b) => b.addEventListener('click', async () => {

@@ -401,6 +401,7 @@ CREATE TABLE IF NOT EXISTS stencils (
   ink REAL,
   favorite INTEGER NOT NULL DEFAULT 0,
   generated_at TEXT,
+  algo INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE (source_type, source_id)
 );
@@ -472,6 +473,7 @@ ensureColumn('artist_profiles', 'require_consent', 'INTEGER NOT NULL DEFAULT 0')
 ensureColumn('artist_profiles', 'consent_photo_ask', 'INTEGER NOT NULL DEFAULT 1');
 ensureColumn('artist_profiles', 'consent_min_age', 'INTEGER NOT NULL DEFAULT 18');
 ensureColumn('appointments', 'flash_id', 'INTEGER REFERENCES flash_designs(id) ON DELETE SET NULL');
+ensureColumn('stencils', 'algo', 'INTEGER NOT NULL DEFAULT 0');
 // Indexes on migrated columns must come after the columns exist.
 db.exec('CREATE INDEX IF NOT EXISTS idx_users_suspended ON users(suspended_at)');
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_calendar_token ON users(calendar_token)');

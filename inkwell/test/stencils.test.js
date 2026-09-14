@@ -119,6 +119,68 @@ test('renderStencil pulls lines out of a drawing as black on transparent; blank 
   assert.equal(b.ink, 0);
 });
 
+test('tracer building blocks: the rank filter matches a naive window, despeckling drops small blobs', () => {
+  const W = 37; const H = 23; const r = 5;
+  const a = new Uint8Array(W * H);
+  for (let i = 0; i < a.length; i += 1) a[i] = (i * 7919) % 256;
+  for (const useMax of [true, false]) {
+    const out = stencils.rankFilter(a, W, H, r, useMax);
+    for (let y = 0; y < H; y += 1) {
+      for (let x = 0; x < W; x += 1) {
+        let v = useMax ? 0 : 255;
+        for (let yy = Math.max(0, y - r); yy <= Math.min(H - 1, y + r); yy += 1) for (let xx = Math.max(0, x - r); xx <= Math.min(W - 1, x + r); xx += 1) { const c = a[yy * W + xx]; if (useMax ? c > v : c < v) v = c; }
+        assert.equal(out[y * W + x], v, `${useMax ? 'max' : 'min'} at ${x},${y}`);
+      }
+    }
+  }
+  const m = new Uint8Array(20 * 20);
+  const on = (x, y) => { m[y * 20 + x] = 1; };
+  on(2, 2); // a lone pixel
+  on(10, 10); on(11, 11); on(12, 12); // a diagonal of three (8-connected)
+  for (let x = 3; x < 15; x += 1) on(x, 17); // a line of twelve
+  stencils.despeckle(m, 20, 20, 4);
+  assert.equal(m[2 * 20 + 2], 0, 'lone pixel dropped');
+  assert.equal(m[10 * 20 + 10], 0, 'three-pixel blob dropped');
+  assert.equal(m[17 * 20 + 3] + m[17 * 20 + 14], 2, 'the line stays');
+});
+
+test('a pen stroke traces as one line, not two edges; camera grain does not become speckle', async () => {
+  // A 6 px stroke on paper, and the same sketch as a grainy phone photo on a skin gradient.
+  const svg = (bg) => Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400">${bg}
+    <path d="M60 300 C 120 80, 280 80, 340 300" fill="none" stroke="#1d1a1f" stroke-width="6"/>
+    <line x1="60" y1="60" x2="340" y2="60" stroke="#1d1a1f" stroke-width="2"/></svg>`);
+  const clean = path.join(tmp, 'stroke.png');
+  fs.writeFileSync(clean, await sharp(svg('<rect width="400" height="400" fill="#f7f3ee"/>')).png().toBuffer());
+  const r = await stencils.renderStencil(clean, { detail: 3 });
+  const raw = (await sharp(r.png).raw().toBuffer({ resolveWithObject: true })).data;
+  const runsAcross = (y) => {
+    let runs = 0; let inside = false;
+    for (let x = 0; x < 400; x += 1) { const ink = raw[(y * 400 + x) * 4 + 3] === 255; if (ink && !inside) runs += 1; inside = ink; }
+    return runs;
+  };
+  // At y = 250 the curve crosses twice (left and right leg): two runs of ink, not four edge lines.
+  assert.equal(runsAcross(250), 2, 'each leg of the stroke is a single line');
+  assert.equal(runsAcross(60), 1, 'the thin rule is one line');
+
+  const { data, info } = await sharp(svg('<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e9c4a6"/><stop offset="1" stop-color="#b98868"/></linearGradient></defs><rect width="400" height="400" fill="url(#g)"/>')).raw().toBuffer({ resolveWithObject: true });
+  let seed = 11;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+  for (let i = 0; i < data.length; i += 1) data[i] = Math.max(0, Math.min(255, data[i] + (rnd() + rnd() + rnd() - 1.5) * 18));
+  const photo = path.join(tmp, 'photo.jpg');
+  await sharp(data, { raw: { width: info.width, height: info.height, channels: info.channels } }).blur(0.9).jpeg({ quality: 78 }).toFile(photo);
+  const p = await stencils.renderStencil(photo, { detail: 3 });
+  const praw = (await sharp(p.png).raw().toBuffer({ resolveWithObject: true })).data;
+  // Count 8-connected blobs: the drawing is two strokes, so a handful of blobs at most, no grain.
+  const mask = new Uint8Array(400 * 400);
+  for (let i = 0; i < mask.length; i += 1) mask[i] = praw[i * 4 + 3] === 255 ? 1 : 0;
+  const before = mask.reduce((n, v) => n + v, 0);
+  stencils.despeckle(mask, 400, 400, 60);
+  const after = mask.reduce((n, v) => n + v, 0);
+  assert.ok(before > 1500, `the strokes were traced from the photo (${before} px)`);
+  assert.ok(after / before > 0.97, `at most 3% of the ink is small blobs, got ${(100 - (after / before) * 100).toFixed(1)}%`);
+  assert.ok(p.ink < 0.08, `no grain carpet (ink ${p.ink})`);
+});
+
 test('uploading a gallery piece or a flash design traces a stencil in the background; deleting the piece drops it', async () => {
   const { c: mara, id: maraId } = await login('mara@inkwell.demo');
   let r = await mara.post('/api/galleries', { title: 'Stencil tests', description: '' });
@@ -173,6 +235,19 @@ test('the scheduler backfills pieces that predate the library; artists can trace
   assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM stencils WHERE status = 'ready'`).get().n - before, 4, 'seeded SVG art traces cleanly');
   const r2 = await stencils.backfill(4);
   assert.equal(r2.queued, 4, 'the next run picks up the next pieces');
+  assert.equal(r2.refreshed, 0);
+  // Stencils traced by an older tracer are re-traced with spare capacity, newest tracer stamped.
+  const ready = db.prepare(`SELECT id, image_url FROM stencils WHERE status = 'ready' ORDER BY id LIMIT 2`).all();
+  db.prepare('UPDATE stencils SET algo = 1 WHERE id IN (?, ?)').run(ready[0].id, ready[1].id);
+  const r3 = await stencils.backfill(4);
+  assert.equal(r3.queued, 4, 'missing pieces still fill the run');
+  assert.equal(r3.refreshed, 1, 'a quarter of the run upgrades old traces');
+  assert.equal(r3.processed, 5);
+  const r4 = await stencils.backfill(4);
+  assert.equal(r4.refreshed, 1);
+  const stamped = db.prepare('SELECT id, image_url, algo FROM stencils WHERE id IN (?, ?) ORDER BY id').all(ready[0].id, ready[1].id);
+  assert.ok(stamped.every((x) => x.algo === stencils.ALGO_VERSION));
+  assert.notEqual(stamped[0].image_url, ready[0].image_url, 're-traced into a new file');
 
   // Mara's seeded pieces are the oldest, so the two runs above did not reach them.
   const { c: sofia, id: sofiaId } = await login('mara@inkwell.demo');

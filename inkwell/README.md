@@ -48,9 +48,13 @@ straight from an artist's published hours.
 
 **Stencil library**
 - Every gallery piece and flash design an artist uploads is traced into a line stencil in the
-  background: edges are pulled out of the image (Sobel gradient, adaptive threshold), thickened
-  and saved as black lines on a transparent PNG. Pieces that predate the library are picked up by
-  the scheduler a batch at a time (`INKWELL_STENCIL_BACKFILL` per run), or all at once with
+  background and saved as black lines on a transparent PNG. The tracer combines two passes: pen
+  strokes of either polarity are found with a morphological top-hat and black-hat, so a stroke
+  becomes one line rather than its two edges; everything else (fills, photos, shading) is traced
+  by Sobel edges thinned to one pixel. Both are thresholded adaptively, small blobs (camera grain,
+  JPEG noise) are dropped, and lines are thickened to survive transfer. Pieces that predate the
+  library are picked up by the scheduler a batch at a time (`INKWELL_STENCIL_BACKFILL` per run),
+  with a quarter of each run re-tracing stencils made by an older tracer, or all at once with
   "Trace missing pieces". Artists can also drop any image straight into the library.
 - The dashboard Stencils tab filters by source and favourites, renames, favourites, re-traces at
   five detail levels (bold outlines only through fine lines and texture) and deletes. Deleting a
