@@ -1333,13 +1333,100 @@
     bindWaitlistEntries(el, () => renderClientWaitlist(el));
   }
 
+  /* ---------- inspiration (popular motifs, open references, recreated stencils) ---------- */
+
+  function referenceCard(r) {
+    return `<div class="art ref-card" data-ref="${r.id}">
+      <a class="ref-card__img" href="${attr(r.page_url || r.image_url)}" target="_blank" rel="noopener"><img src="${attr(r.thumb)}" alt="${attr(r.title)}" loading="lazy"></a>
+      <div class="art__body">
+        <div class="art__title"><span>${esc(r.title)}</span></div>
+        <div class="art__meta"><span class="tag" title="${attr(r.license_url || '')}">${esc(r.license)}</span>${r.creator ? `<span>${esc(r.creator)}</span>` : ''}<span class="faint">${esc(r.provider)}</span></div>
+        <div class="row stencil-card__actions"><button class="btn btn--sm" data-recreate="${r.id}">Trace as stencil</button><a class="link small" href="${attr(r.page_url || r.image_url)}" target="_blank" rel="noopener">Source ↗</a></div>
+      </div>
+    </div>`;
+  }
+
+  function briefHtml(b) {
+    if (!b) return '';
+    const list = (items) => (items && items.length ? `<ul class="brief__list">${items.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : '');
+    return `<div class="card brief">
+      <div class="section__head" style="margin-bottom:8px"><h3 style="margin:0">Design notes</h3><span class="small muted">${b.generated_by === 'tags' ? 'from reference tags' : `written by Claude from the references`}${b.brief_at ? ` · ${timeAgo(b.brief_at)}` : ''}</span></div>
+      <p>${esc(b.summary)}</p>
+      <div class="brief__cols">
+        <div><strong class="small">Composition</strong>${list(b.composition)}</div>
+        <div><strong class="small">For the stencil</strong>${list(b.stencil_tips)}</div>
+      </div>
+      ${b.search_terms && b.search_terms.length ? `<div class="chips" style="margin-top:10px">${b.search_terms.map((t) => `<button type="button" class="chip" data-term="${attr(t)}">${esc(t)}</button>`).join('')}</div>` : ''}
+    </div>`;
+  }
+
+  /** Inspiration panel inside the stencil library: trending motifs, open references, briefs, recreate. */
+  async function renderInspiration(host, { onRecreated, levels }) {
+    host.innerHTML = '<div class="loading">Loading</div>';
+    let trending;
+    try { trending = await api.get('/api/inspiration/trending', { limit: 14 }); } catch (err) { host.innerHTML = ''; return handleError(err); }
+    const state = { motif: null, query: '', results: [], brief: null, harvested_at: null };
+    const draw = () => {
+      host.innerHTML = `
+        <div class="inspiration">
+          <div class="section__head"><h3 style="margin:0">Popular motifs</h3><span class="small muted">${trending.references} openly licensed reference${trending.references === 1 ? '' : 's'} indexed${trending.enabled ? '' : ' · harvesting is off on this server'}</span></div>
+          <p class="small muted" style="margin:-4px 0 10px">Ranked by what clients ask for on Inkwell. Pick one to see public-domain and Creative Commons references, then trace any of them into your library with the credit kept.</p>
+          <div class="chips" data-motifs>${trending.motifs.map((m) => `<button type="button" class="chip ${state.motif === m.motif ? 'active' : ''}" data-motif="${attr(m.motif)}" title="${m.requests} request${m.requests === 1 ? '' : 's'}, ${m.flash} flash, ${m.likes} likes">${esc(m.motif)}${m.requests ? ` <span class="muted">${m.requests}</span>` : ''}</button>`).join('')}</div>
+          <form class="inspiration__search" data-search>
+            <input name="q" placeholder="Describe a design: sailor swallow with banner, art nouveau peony..." value="${attr(state.query)}" aria-label="Search references">
+            <button class="btn btn--sm">Search</button>
+            ${state.motif ? `<button type="button" class="btn btn--ghost btn--sm" data-harvest>Fetch more for “${esc(state.motif)}”</button><button type="button" class="btn btn--ghost btn--sm" data-brief>${state.brief ? 'Rewrite notes' : 'Design notes'}</button>` : ''}
+          </form>
+          <div data-brief-box>${briefHtml(state.brief)}</div>
+          <div data-results>${state.results.length ? `<div class="grid-art">${state.results.map(referenceCard).join('')}</div>` : (state.motif || state.query ? `<div class="empty"><h3>No references yet</h3><p>${trending.enabled ? 'Fetch some now, or wait for the scheduler: it harvests one motif every ten minutes.' : 'Harvesting is turned off on this server.'}</p></div>` : '')}</div>
+        </div>`;
+      $$('[data-motif]', host).forEach((b) => b.addEventListener('click', () => { state.motif = b.dataset.motif; state.query = b.dataset.motif; state.brief = null; load(); }));
+      $('[data-search]', host).addEventListener('submit', (e) => { e.preventDefault(); state.query = e.target.q.value.trim(); if (!state.query) return; state.motif = null; state.brief = null; load(); });
+      $$('[data-term]', host).forEach((b) => b.addEventListener('click', () => { state.query = b.dataset.term; state.motif = null; load(); }));
+      const harvest = $('[data-harvest]', host);
+      if (harvest) harvest.addEventListener('click', async () => {
+        harvest.disabled = true; harvest.textContent = 'Fetching…';
+        try { const r = await api.post('/api/inspiration/harvest', { motif: state.motif }); toast(r.fresh ? 'Fetched within the hour, showing the index' : (r.added ? `${r.added} references indexed` : 'Nothing new found')); if (r.errors && r.errors.length) toast(r.errors[0], 'error'); trending = await api.get('/api/inspiration/trending', { limit: 14 }); state.results = r.results; draw(); } catch (err) { handleError(err); draw(); }
+      });
+      const brief = $('[data-brief]', host);
+      if (brief) brief.addEventListener('click', async () => {
+        brief.disabled = true; brief.textContent = 'Writing…';
+        try { const r = await api.post('/api/inspiration/brief', { motif: state.motif, refresh: !!state.brief }); state.brief = r.brief; draw(); } catch (err) { handleError(err); draw(); }
+      });
+      $$('[data-recreate]', host).forEach((b) => b.addEventListener('click', async () => {
+        const ref = state.results.find((x) => x.id === Number(b.dataset.recreate));
+        const modal = openModal(`<div class="modal__panel"><div class="modal__head"><div><h3 style="margin:0">Trace as stencil</h3><p class="small muted" style="margin:4px 0 0">${esc(ref.title)}${ref.creator ? ` · after ${esc(ref.creator)}` : ''} · ${esc(ref.license)}</p></div><button class="modal__close" data-close-modal aria-label="Close">×</button></div>
+          <form class="form modal__body" data-form><div class="error" hidden></div>
+            <div class="field"><label>Detail level</label><div class="chips" data-levels>${levels.map((l) => `<button type="button" class="chip ${l === 3 ? 'active' : ''}" data-level="${l}">${l}</button>`).join('')}</div></div>
+            <p class="small muted" style="margin:0">The image is copied into your library with its licence and source recorded, so the credit travels with the stencil.${/sa/i.test(ref.license) ? ' This licence is share-alike: derived designs you publish carry the same licence.' : ''}</p>
+            <button class="btn btn--block">Trace it</button></form></div>`, { small: true });
+        const form = $('[data-form]', modal);
+        let level = 3;
+        $$('[data-level]', form).forEach((x) => x.addEventListener('click', () => { level = Number(x.dataset.level); $$('[data-level]', form).forEach((y) => y.classList.toggle('active', y === x)); }));
+        form.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const btn = form.querySelector('button.btn'); btn.disabled = true; btn.textContent = 'Fetching and tracing…';
+          try { const r = await api.post(`/api/inspiration/references/${ref.id}/recreate`, { detail: level }); closeModal(); toast(r.stencil.status === 'ready' ? 'Stencil added to your library' : 'Added, but it could not be traced'); onRecreated(r.stencil); } catch (err) { handleError(err, $('.error', form)); btn.disabled = false; btn.textContent = 'Trace it'; }
+        });
+      }));
+    };
+    const load = async () => {
+      try {
+        const r = await api.get('/api/inspiration/search', { q: state.query || state.motif, motif: state.motif || undefined });
+        state.results = r.results; state.harvested_at = r.harvested_at; if (r.brief && !state.brief) state.brief = r.brief;
+      } catch (err) { handleError(err); }
+      draw();
+    };
+    draw();
+  }
+
   /* ---------- stencil library ---------- */
 
-  const STENCIL_SOURCES = { artwork: 'From a gallery piece', flash: 'From flash', upload: 'Uploaded' };
+  const STENCIL_SOURCES = { artwork: 'From a gallery piece', flash: 'From flash', upload: 'Uploaded', reference: 'Recreated from a reference' };
 
   function stencilCard(s) {
     const src = STENCIL_SOURCES[s.source_type] || s.source_type;
-    const link = s.source_link;
+    const link = s.source_link || (s.attribution && s.attribution.page_url) || null;
     const body = s.status === 'ready'
       ? `<img src="${attr(s.thumb_url)}" alt="${attr(s.title)}" loading="lazy" ${s.width && s.height ? `width="${s.width}" height="${s.height}"` : ''}>`
       : `<div class="stencil-card__state"><img src="${attr(s.source_url)}" alt="" loading="lazy"><span class="pill pill--${s.status === 'failed' ? 'declined' : 'pending'}">${s.status === 'failed' ? 'Could not trace' : 'Tracing'}</span></div>`;
@@ -1348,7 +1435,8 @@
       <div class="stencil-card__img" data-open="${s.id}">${body}</div>
       <div class="art__body">
         <div class="art__title"><span>${esc(s.title)}</span><span class="small muted">detail ${s.detail}</span></div>
-        <div class="art__meta">${link ? `<a class="tag" href="${link}">${src}</a>` : `<span class="tag">${src}</span>`}${s.status === 'ready' && s.width ? `<span>${s.width}×${s.height}</span>` : ''}</div>
+        <div class="art__meta">${link ? `<a class="tag" href="${attr(link)}" ${/^https?:/.test(link) ? 'target="_blank" rel="noopener"' : ''}>${src}</a>` : `<span class="tag">${src}</span>`}${s.status === 'ready' && s.width ? `<span>${s.width}×${s.height}</span>` : ''}</div>
+        ${s.attribution ? `<p class="small muted stencil-card__credit" style="margin:6px 0 0">After ${esc(s.attribution.creator || 'unknown')} · ${esc(s.attribution.license)}${s.attribution.page_url ? ` · <a class="link" href="${attr(s.attribution.page_url)}" target="_blank" rel="noopener">source</a>` : ''}</p>` : ''}
         ${s.status === 'failed' ? `<p class="small" style="margin:8px 0 0;color:var(--accent)">${esc(s.error || 'Tracing failed.')}</p>` : ''}
         <div class="row stencil-card__actions">
           ${s.status === 'ready' ? `<button class="btn btn--sm" data-download="${s.id}">Download</button>` : ''}
@@ -1403,7 +1491,7 @@
   function stencilModal(s, levels, onChange) {
     const modal = openModal(`
       <div class="modal__panel stencil-modal">
-        <div class="modal__head"><div><h3 style="margin:0" data-title>${esc(s.title)}</h3><p class="small muted" style="margin:4px 0 0">${esc(STENCIL_SOURCES[s.source_type] || '')}${s.generated_at ? ` · traced ${timeAgo(s.generated_at)}` : ''}</p></div><button class="modal__close" data-close-modal aria-label="Close">×</button></div>
+        <div class="modal__head"><div><h3 style="margin:0" data-title>${esc(s.title)}</h3><p class="small muted" style="margin:4px 0 0">${esc(STENCIL_SOURCES[s.source_type] || '')}${s.attribution ? ` · after ${esc(s.attribution.creator || 'unknown')} (${esc(s.attribution.license)})` : ''}${s.generated_at ? ` · traced ${timeAgo(s.generated_at)}` : ''}</p></div><button class="modal__close" data-close-modal aria-label="Close">×</button></div>
         <div class="modal__body stencil-modal__body">
           <div class="stencil-modal__preview" data-preview>
             ${s.status === 'ready' ? `<img src="${attr(s.image_url)}" alt="${attr(s.title)}">` : `<div class="stencil-modal__state"><img src="${attr(s.source_url)}" alt=""><p class="small ${s.status === 'failed' ? '' : 'muted'}">${esc(s.status === 'failed' ? (s.error || 'Tracing failed.') : 'Still tracing. This takes a moment.')}</p></div>`}
@@ -1480,6 +1568,7 @@
   /** Dashboard tab: the artist's stencil library. */
   function renderStencilLibrary(panel) {
     const filter = { source: '', favorites: false };
+    let showInspiration = false;
     let data = null;
     let pollTimer = null;
     const load = async () => {
@@ -1498,7 +1587,7 @@
       const { stencils, counts, levels } = data;
       const chip = (label, active, attrs) => `<button type="button" class="chip ${active ? 'active' : ''}" ${attrs}>${label}</button>`;
       panel.innerHTML = `
-        <div class="section__head"><h2>Stencil library</h2><div class="row"><button class="btn btn--ghost btn--sm" data-backfill>Trace missing pieces</button><button class="btn btn--sm" data-upload>Trace an image</button></div></div>
+        <div class="section__head"><h2>Stencil library</h2><div class="row"><button class="btn btn--ghost btn--sm ${showInspiration ? 'active' : ''}" data-inspire>${showInspiration ? 'Hide popular designs' : 'Find popular designs'}</button><button class="btn btn--ghost btn--sm" data-backfill>Trace missing pieces</button><button class="btn btn--sm" data-upload>Trace an image</button></div></div>
         <p class="small muted" style="margin-top:-6px">Every piece you upload to a gallery or the flash board is traced into a line stencil in the background, so the library fills itself. Download at real size, mirrored for transfer paper.</p>
         <div class="stencil-toolbar">
           <div class="chips" data-filters>
@@ -1506,12 +1595,18 @@
             ${chip('Gallery pieces', filter.source === 'artwork', 'data-source="artwork"')}
             ${chip('Flash', filter.source === 'flash', 'data-source="flash"')}
             ${chip('Uploaded', filter.source === 'upload', 'data-source="upload"')}
+            ${chip('Recreated', filter.source === 'reference', 'data-source="reference"')}
             ${chip(`★ Favourites <span class="muted">${counts.favorites}</span>`, filter.favorites, 'data-favorites')}
           </div>
           <span class="small muted" data-status>${counts.pending ? `${counts.pending} tracing…` : `${counts.ready} ready`}${counts.failed ? ` · ${counts.failed} could not be traced` : ''}</span>
         </div>
+        <div data-inspiration hidden></div>
         ${stencils.length ? `<div class="grid-art stencil-grid">${stencils.map(stencilCard).join('')}</div>` : `<div class="empty"><h3>${counts.total ? 'Nothing here' : 'No stencils yet'}</h3><p>${counts.total ? 'Try another filter.' : 'Upload a piece to a gallery, post flash, or trace an image directly. Pieces uploaded before the library existed are traced by the scheduler; "Trace missing pieces" does it now.'}</p></div>`}`;
       $$('[data-source]', panel).forEach((b) => b.addEventListener('click', () => { filter.source = b.dataset.source; filter.favorites = false; load(); }));
+      const inspireBox = $('[data-inspiration]', panel);
+      const inspire = () => { inspireBox.hidden = !showInspiration; if (showInspiration) renderInspiration(inspireBox, { levels, onRecreated: (s) => { filter.source = 'reference'; filter.favorites = false; patch(s); } }); };
+      $('[data-inspire]', panel).addEventListener('click', () => { showInspiration = !showInspiration; draw(); });
+      inspire();
       $('[data-favorites]', panel).addEventListener('click', () => { filter.favorites = !filter.favorites; filter.source = ''; load(); });
       $('[data-upload]', panel).addEventListener('click', () => stencilUploadModal(levels, (s) => patch(s)));
       $('[data-backfill]', panel).addEventListener('click', async (e) => {

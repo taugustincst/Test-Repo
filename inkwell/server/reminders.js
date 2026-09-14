@@ -15,6 +15,7 @@ const mailer = require('./mailer');
 const calendar = require('./calendar');
 const consent = require('./consent');
 const stencils = require('./stencils');
+const inspiration = require('./inspiration');
 
 const REVIEW_AFTER_DAYS = Number(process.env.INKWELL_REVIEW_REMINDER_DAYS) || 2;
 const REVIEW_WINDOW_DAYS = 30;
@@ -108,6 +109,7 @@ async function runAll() {
   try { out.review_reminders = sendReviewReminders(); } catch (err) { console.error('[reminders] reviews', err.message); }
   try { out.busy_calendars = await calendar.syncStaleBusyCalendars(); } catch (err) { console.error('[reminders] busy calendars', err.message); }
   try { out.stencils = await stencils.backfill(); } catch (err) { console.error('[reminders] stencils', err.message); }
+  try { out.inspiration = await inspiration.harvestTrending(); } catch (err) { console.error('[reminders] inspiration', err.message); }
   return out;
 }
 

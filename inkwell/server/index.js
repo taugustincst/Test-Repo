@@ -173,6 +173,7 @@ function createApp(options = {}) {
   app.use('/api/flash', require('./routes/flash'));
   app.use('/api/waitlist', require('./waitlist').router);
   app.use('/api/stencils', require('./stencils').router);
+  app.use('/api/inspiration', require('./inspiration').router);
   const calendarRoutes = require('./routes/calendar');
   app.use('/api/calendar', calendarRoutes.api);
   app.use(calendarRoutes.pub); // /calendar/:token.ics

@@ -26,7 +26,7 @@ const DEFAULT_DETAIL = 3;
 const DPI = 300;
 const MAX_PRINT_PX = 6000;
 const BACKFILL_PER_RUN = Number(process.env.INKWELL_STENCIL_BACKFILL) || 20;
-const SOURCES = ['artwork', 'flash', 'upload'];
+const SOURCES = ['artwork', 'flash', 'upload', 'reference'];
 
 // Per detail level: pre-blur for edge finding (less blur keeps finer edges), share of the picture
 // allowed to become edge lines and stroke lines, the smallest blob kept (despeckling, in pixels
@@ -380,6 +380,20 @@ function dropSource(sourceType, sourceId) {
   }
 }
 
+/**
+ * Add an image that already lives in the uploads directory to an artist's library and trace it
+ * now. `sourceType` 'upload' rows point at themselves; 'reference' rows point at the reference
+ * image they were traced from and carry its attribution.
+ */
+async function createFromFile(artistId, { sourceType = 'upload', sourceId = 0, sourceUrl, title, detail = DEFAULT_DETAIL, attribution = null }) {
+  const level = LEVELS[Number(detail)] ? Number(detail) : DEFAULT_DETAIL;
+  const info = db.prepare(`INSERT INTO stencils (artist_id, source_type, source_id, source_url, title, detail, status, attribution) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`)
+    .run(artistId, sourceType, sourceId, sourceUrl, String(title || 'Stencil').slice(0, 120), level, attribution ? JSON.stringify(attribution) : null);
+  if (sourceType === 'upload') db.prepare('UPDATE stencils SET source_id = id WHERE id = ?').run(info.lastInsertRowid);
+  await processOne(getStencil.get(info.lastInsertRowid));
+  return getStencil.get(info.lastInsertRowid);
+}
+
 /* ---------- shaping and routes ---------- */
 
 function shape(row) {
@@ -389,6 +403,7 @@ function shape(row) {
     source_id: row.source_id,
     source_url: row.source_url,
     source_link: row.source_type === 'flash' ? `/flash/${row.source_id}` : (row.source_type === 'artwork' && row.artwork_gallery_id ? `/galleries/${row.artwork_gallery_id}` : null),
+    attribution: row.attribution ? JSON.parse(row.attribution) : null,
     title: row.title,
     detail: row.detail,
     status: row.status,
@@ -441,13 +456,9 @@ router.post('/', upload.single('image'), async (req, res, next) => {
     if (!req.file) return res.status(400).json({ error: 'Choose an image to trace.' });
     let image;
     try { image = await processArtwork(req.file); } catch (err) { return res.status(400).json({ error: err.message }); }
-    const detail = Number((req.body || {}).detail) || DEFAULT_DETAIL;
-    const info = db.prepare(`INSERT INTO stencils (artist_id, source_type, source_id, source_url, title, detail, status) VALUES (?, 'upload', 0, ?, ?, ?, 'pending')`)
-      .run(req.user.id, image.url, String((req.body || {}).title || req.file.originalname.replace(/\.[a-z0-9]+$/i, '') || 'Stencil').slice(0, 120), LEVELS[detail] ? detail : DEFAULT_DETAIL);
-    db.prepare('UPDATE stencils SET source_id = id WHERE id = ?').run(info.lastInsertRowid);
     removeByUrl(image.thumb_url);
-    await processOne(getStencil.get(info.lastInsertRowid));
-    res.status(201).json({ stencil: shape(getStencil.get(info.lastInsertRowid)) });
+    const row = await createFromFile(req.user.id, { sourceUrl: image.url, title: (req.body || {}).title || req.file.originalname.replace(/\.[a-z0-9]+$/i, ''), detail: (req.body || {}).detail });
+    res.status(201).json({ stencil: shape(row) });
   } catch (err) { next(err); }
 });
 
@@ -491,7 +502,7 @@ router.delete('/:id', (req, res) => {
   if (!row) return;
   deleteStencil.run(row.id);
   removeByUrl(row.image_url);
-  if (row.source_type === 'upload') removeByUrl(row.source_url);
+  if (row.source_type === 'upload' || row.source_type === 'reference') removeByUrl(row.source_url);
   res.json({ ok: true });
 });
 
@@ -519,4 +530,4 @@ router.get('/:id/print.png', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-module.exports = { router, renderStencil, enqueue, processPending, backfill, kick, dropSource, LEVELS, DEFAULT_DETAIL, DPI, BACKFILL_PER_RUN, ALGO_VERSION, rankFilter, despeckle };
+module.exports = { router, renderStencil, enqueue, processPending, backfill, kick, dropSource, createFromFile, shape, LEVELS, DEFAULT_DETAIL, DPI, BACKFILL_PER_RUN, ALGO_VERSION, rankFilter, despeckle };
