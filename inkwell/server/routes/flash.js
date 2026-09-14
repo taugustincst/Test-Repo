@@ -12,6 +12,7 @@ const { requireRole } = require('../auth');
 const { upload, removeByUrl } = require('../upload');
 const { processArtwork } = require('../images');
 const analytics = require('../analytics');
+const stencils = require('../stencils');
 
 const router = express.Router();
 
@@ -126,6 +127,7 @@ router.post('/', requireRole('artist'), upload.single('image'), async (req, res)
   let image;
   try { image = await processArtwork(req.file); } catch (err) { return res.status(400).json({ error: err.message }); }
   const info = insertFlash.run({ ...v, artist_id: req.user.id, image_url: image.url, thumb_url: image.thumb_url, width: image.width, height: image.height });
+  stencils.kick(req.user.id, 'flash', Number(info.lastInsertRowid), image.url, v.title);
   res.status(201).json({ flash: shape(getFlash.get(info.lastInsertRowid), req.user) });
 });
 
@@ -145,6 +147,7 @@ router.delete('/:id', requireRole('artist'), (req, res) => {
   if (liveClaim.get(row.id)) return res.status(400).json({ error: 'This design has a live booking. Cancel it first or hide the design.' });
   deleteFlash.run(row.id);
   removeByUrl(row.image_url);
+  stencils.dropSource('flash', row.id);
   res.json({ ok: true });
 });
 

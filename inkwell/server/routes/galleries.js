@@ -5,6 +5,7 @@ const { db, STYLES } = require('../db');
 const { requireAuth, requireRole } = require('../auth');
 const { upload, removeByUrl } = require('../upload');
 const { processArtwork } = require('../images');
+const stencils = require('../stencils');
 const analytics = require('../analytics');
 
 const router = express.Router();
@@ -126,7 +127,7 @@ router.delete('/galleries/:id', requireRole('artist'), (req, res) => {
   if (!gallery) return;
   const files = artworksForGalleryRaw.all(gallery.id);
   deleteGallery.run(gallery.id);
-  files.forEach((f) => removeByUrl(f.image_url));
+  files.forEach((f) => { removeByUrl(f.image_url); stencils.dropSource('artwork', f.id); });
   res.json({ ok: true });
 });
 
@@ -150,6 +151,7 @@ router.post('/galleries/:id/artworks', requireRole('artist'), upload.single('ima
     style: cleanStyle(body.style),
     placement: String(body.placement || '').slice(0, 60),
   });
+  stencils.kick(req.user.id, 'artwork', Number(info.lastInsertRowid), image.url, title);
   res.status(201).json({ artwork: decorate(getArtwork.get(info.lastInsertRowid), req.user) });
 });
 
@@ -183,6 +185,7 @@ router.delete('/artworks/:id', requireRole('artist'), (req, res) => {
   if (artwork.artist_id !== req.user.id) return res.status(403).json({ error: 'This is not your artwork.' });
   deleteArtwork.run(artwork.id);
   removeByUrl(artwork.image_url);
+  stencils.dropSource('artwork', artwork.id);
   res.json({ ok: true });
 });
 

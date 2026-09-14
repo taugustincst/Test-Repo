@@ -384,6 +384,29 @@ CREATE TABLE IF NOT EXISTS waitlist (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS stencils (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  artist_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  source_type TEXT NOT NULL CHECK (source_type IN ('artwork', 'flash', 'upload', 'reference')),
+  source_id INTEGER NOT NULL,
+  source_url TEXT NOT NULL,
+  title TEXT NOT NULL DEFAULT 'Untitled',
+  detail INTEGER NOT NULL DEFAULT 3,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'ready', 'failed')),
+  error TEXT,
+  image_url TEXT,
+  thumb_url TEXT,
+  width INTEGER,
+  height INTEGER,
+  ink REAL,
+  favorite INTEGER NOT NULL DEFAULT 0,
+  generated_at TEXT,
+  algo INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  attribution TEXT,
+  UNIQUE (artist_id, source_type, source_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_artworks_artist ON artworks(artist_id);
 CREATE INDEX IF NOT EXISTS idx_artworks_gallery ON artworks(gallery_id);
 CREATE INDEX IF NOT EXISTS idx_comments_artwork ON comments(artwork_id);
@@ -412,6 +435,39 @@ CREATE INDEX IF NOT EXISTS idx_flash_artist ON flash_designs(artist_id, status, 
 CREATE INDEX IF NOT EXISTS idx_flash_status ON flash_designs(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_waitlist_artist ON waitlist(artist_id, status, created_at);
 CREATE INDEX IF NOT EXISTS idx_waitlist_client ON waitlist(client_id, status);
+CREATE INDEX IF NOT EXISTS idx_stencils_artist ON stencils(artist_id, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_stencils_status ON stencils(status, id);
+
+CREATE TABLE IF NOT EXISTS reference_images (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  provider TEXT NOT NULL,
+  external_id TEXT NOT NULL,
+  motif TEXT NOT NULL,
+  title TEXT NOT NULL,
+  creator TEXT,
+  license TEXT NOT NULL,
+  license_url TEXT,
+  page_url TEXT,
+  image_url TEXT NOT NULL,
+  thumb_url TEXT,
+  width INTEGER,
+  height INTEGER,
+  tags TEXT NOT NULL DEFAULT '',
+  text TEXT NOT NULL DEFAULT '',
+  vec BLOB,
+  fetched_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (provider, external_id)
+);
+CREATE INDEX IF NOT EXISTS idx_reference_motif ON reference_images(motif, fetched_at);
+
+CREATE TABLE IF NOT EXISTS motif_harvests (
+  motif TEXT PRIMARY KEY,
+  fetched_at TEXT,
+  results INTEGER NOT NULL DEFAULT 0,
+  error TEXT,
+  brief TEXT,
+  brief_at TEXT
+);
 `;
 
 db.exec(SCHEMA);
@@ -449,6 +505,7 @@ ensureColumn('artist_profiles', 'require_consent', 'INTEGER NOT NULL DEFAULT 0')
 ensureColumn('artist_profiles', 'consent_photo_ask', 'INTEGER NOT NULL DEFAULT 1');
 ensureColumn('artist_profiles', 'consent_min_age', 'INTEGER NOT NULL DEFAULT 18');
 ensureColumn('appointments', 'flash_id', 'INTEGER REFERENCES flash_designs(id) ON DELETE SET NULL');
+ensureColumn('stencils', 'algo', 'INTEGER NOT NULL DEFAULT 0');
 // Indexes on migrated columns must come after the columns exist.
 db.exec('CREATE INDEX IF NOT EXISTS idx_users_suspended ON users(suspended_at)');
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_calendar_token ON users(calendar_token)');
