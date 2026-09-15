@@ -318,6 +318,23 @@ const templates = {
       cta: { label: 'Leave a review', url: `${APP_URL}/appointments?review=${appt.id}` },
     };
   },
+  mockupSent(mockup, artist) {
+    return {
+      to: mockup.client_id, subject: `${artist.name} sent a placement preview`,
+      title: `See how "${mockup.title}" sits on you`,
+      paragraphs: [`${artist.name} placed the stencil on your photo so you can check size and position before the session. Approve it, or ask for changes.`],
+      cta: { label: 'View the placement', url: `${APP_URL}/mockups/${mockup.id}` },
+    };
+  },
+  mockupResponse(mockup, client) {
+    const approved = mockup.status === 'approved';
+    return {
+      to: mockup.artist_id, subject: approved ? `${client.name} approved the placement` : `${client.name} asked for changes to the placement`,
+      title: approved ? `Placement approved: ${mockup.title}` : `Changes requested: ${mockup.title}`,
+      paragraphs: [approved ? `${client.name} is happy with the size and position.` : `${client.name} would like the placement adjusted.`, mockup.client_note ? `"${mockup.client_note}"` : null].filter(Boolean),
+      cta: { label: 'Open the placement', url: `${APP_URL}/mockups/${mockup.id}` },
+    };
+  },
   newMessage(sender, recipientId, body) {
     return {
       to: recipientId, subject: `New message from ${sender.name}`,

@@ -168,6 +168,8 @@ test('review reminders go out once, two days after a completed session, only whe
   const fresh = completedSession(inesId, tomaszId, 1);
   const reviewedAppt = completedSession(inesId, tomaszId, 4);
   db.prepare("INSERT INTO reviews (appointment_id, artist_id, client_id, rating, body) VALUES (?, ?, ?, 5, 'great')").run(reviewedAppt, tomaszId, inesId);
+  // Seeded sessions age past the two-day mark as the clock moves; keep them out of this count.
+  db.prepare("UPDATE appointments SET review_reminded_at = datetime('now') WHERE client_id = ? AND id NOT IN (?, ?, ?)").run(inesId, due, fresh, reviewedAppt);
   const before = db.prepare('SELECT COUNT(*) AS n FROM email_log WHERE to_user_id = ?').get(inesId).n;
 
   const sent = reminders.sendReviewReminders();

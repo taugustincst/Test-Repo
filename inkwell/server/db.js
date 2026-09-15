@@ -438,6 +438,30 @@ CREATE INDEX IF NOT EXISTS idx_waitlist_client ON waitlist(client_id, status);
 CREATE INDEX IF NOT EXISTS idx_stencils_artist ON stencils(artist_id, status, created_at);
 CREATE INDEX IF NOT EXISTS idx_stencils_status ON stencils(status, id);
 
+CREATE TABLE IF NOT EXISTS mockups (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  artist_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  client_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  appointment_id INTEGER REFERENCES appointments(id) ON DELETE SET NULL,
+  stencil_id INTEGER REFERENCES stencils(id) ON DELETE SET NULL,
+  title TEXT NOT NULL DEFAULT 'Placement',
+  photo_url TEXT NOT NULL,
+  transform TEXT NOT NULL,
+  image_url TEXT NOT NULL,
+  thumb_url TEXT,
+  width INTEGER,
+  height INTEGER,
+  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'sent', 'approved', 'changes')),
+  client_note TEXT,
+  sent_at TEXT,
+  responded_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_mockups_artist ON mockups(artist_id, updated_at);
+CREATE INDEX IF NOT EXISTS idx_mockups_client ON mockups(client_id, status);
+CREATE INDEX IF NOT EXISTS idx_mockups_appointment ON mockups(appointment_id);
+
 CREATE TABLE IF NOT EXISTS reference_images (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   provider TEXT NOT NULL,

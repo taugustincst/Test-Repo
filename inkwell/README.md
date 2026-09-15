@@ -75,6 +75,17 @@ straight from an artist's published hours.
   are assembled from the references' tags. Popular designs found on social platforms are
   deliberately not scraped: they are other artists' copyrighted work.
 
+**Placement previews**
+- From any traced stencil ("Preview on skin") or a booking card ("Preview placement"), an artist
+  lays the stencil over a photo of the spot: drag to move, scroll or slide to size, turn, mirror,
+  pick the ink colour and strength. The server renders the composite (up to 1600 px) so both
+  sides see the same picture; the transform is stored as fractions of the photo. The photo can be
+  uploaded, reused from another placement, or taken from the client's request reference.
+- Sending a placement posts it into the conversation and notifies the client, who approves it or
+  asks for changes with a note. The answer comes back as a message and a notification, and the
+  booking card on both sides shows the placement state. Adjusting a sent placement returns it
+  to draft until it is sent again.
+
 **Waitlist**
 - Clients join an artist's waitlist from the profile or booking page, optionally for a date window
   or a specific flash design, with a note. Artists see their queue on a dashboard tab and can
@@ -353,6 +364,7 @@ All endpoints live under `/api` and return JSON. Authentication is a session coo
 | Calendar     | `GET /calendar` (feed links, busy status), `POST /calendar/reset`, `PUT`/`DELETE /calendar/busy`, `POST /calendar/busy/sync`; at the root: `GET /calendar/:token.ics` |
 | Stencils     | `GET /stencils?source=artwork|flash|upload&favorites=1`, `POST /stencils` (multipart `image`, `title`, `detail`), `POST /stencils/backfill`, `GET`/`PUT`/`DELETE /stencils/:id` (`title`, `favorite`, `detail` re-traces), `POST /stencils/:id/regenerate`, `GET /stencils/:id/print.png?width_cm=&height_cm=&mirror=1&transparent=1&dpi=` (artists) |
 | Inspiration  | `GET /inspiration/trending`, `GET /inspiration/search?q=&motif=`, `POST /inspiration/harvest` (`motif`), `POST /inspiration/brief` (`motif`, `refresh`), `POST /inspiration/references/:id/recreate` (`detail`) (artists) |
+| Placements   | `GET /mockups` (mine, or sent to me), `POST /mockups` (multipart `photo` or `mockup_id` or `request_id`, `stencil_id`, `transform`, `client_id`, `appointment_id`, `title`), `GET`/`PUT`/`DELETE /mockups/:id`, `POST /mockups/:id/send` (`message`), `POST /mockups/:id/respond` (`status` approved or changes, `note`; client) |
 | Waitlist     | `GET /waitlist` (mine, or the artist's queue), `GET /waitlist/artists/:id`, `POST /waitlist`, `DELETE /waitlist/:id`, `POST /waitlist/:id/invite` (artist) |
 | Consent      | `GET`/`PUT /consent/settings` (artist), `GET`/`POST /appointments/:id/consent`, `GET /appointments/:id/consent/signature.png` |
 | Payments     | `GET /payments/config`, `GET /payments`, `POST /payments/:id/pay` (demo card), `POST /payments/:id/checkout` and `POST /payments/:id/confirm` (Stripe) |
@@ -396,6 +408,7 @@ inkwell/
     waitlist.js     Waitlist queue, slot-freed and books-open notifications, artist invites
     stencils.js     Stencil tracing (sharp + Sobel), passive queue and backfill, library routes, print-size export
     inspiration.js  Popular motifs, open-licence reference harvesting and search, Claude design briefs, recreate-as-stencil
+    mockups.js      Placement previews: stencil-over-photo rendering, sending, client approval
     seed.js         Demo data and SVG artwork generator
     routes/         auth, artists, galleries, flash, requests, bookings, payments, messages, collections, share, calendar, consent, reviews, reports, admin, push, analytics
   scripts/          backup.js, make-admin.js
