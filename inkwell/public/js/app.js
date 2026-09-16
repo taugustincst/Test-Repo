@@ -1082,6 +1082,8 @@
     if (!isArtist && a.review_id) actions.push(`<a class="btn btn--ghost btn--sm" href="/artists/${a.artist_id}">See your review</a>`);
     if (a.consent && a.consent.signed_at) actions.push(`<a class="btn btn--ghost btn--sm" href="/appointments/${a.id}/consent">View consent</a>`);
     else if (a.consent && !isArtist && ['pending', 'confirmed'].includes(a.status)) actions.unshift(`<a class="btn btn--sm ${a.consent.required ? '' : 'btn--subtle'}" href="/appointments/${a.id}/consent">Sign consent form</a>`);
+    if (a.mockup) actions.push(`<a class="btn btn--ghost btn--sm" href="/mockups/${a.mockup.id}">${a.mockup.status === 'sent' && !isArtist ? 'Review placement' : 'View placement'}</a>`);
+    else if (isArtist && ['pending', 'confirmed'].includes(a.status)) actions.push(`<a class="btn btn--ghost btn--sm btn--subtle" href="/mockups/new?client=${a.client_id}&appointment=${a.id}">Preview placement</a>`);
     actions.push(`<a class="btn btn--ghost btn--sm" href="/messages/${other.id}">Message</a>`);
     if (a.calendar) actions.push(`<details class="menu"><summary class="btn btn--ghost btn--sm">Add to calendar</summary><div class="menu__list"><a class="menu__item" href="${attr(a.calendar.google)}" target="_blank" rel="noopener">Google Calendar</a><a class="menu__item" href="${attr(a.calendar.outlook)}" target="_blank" rel="noopener">Outlook.com</a><a class="menu__item" href="${attr(a.calendar.ics)}" download rel="external">Apple / other (.ics)</a><a class="menu__item" href="/settings#calendar">Subscribe to all sessions</a></div></details>`);
     if (!isArtist && ['pending', 'confirmed', 'completed'].includes(a.status)) {
@@ -1093,7 +1095,7 @@
       <div class="card appt">
         <div class="appt__date"><span>${d.toLocaleDateString(undefined, { month: 'short' })}</span><strong>${d.getDate()}</strong><span>${d.toLocaleDateString(undefined, { weekday: 'short' })}</span></div>
         <div>
-          <div class="row"><strong>${fmtTime(a.starts_at)} – ${fmtTime(a.ends_at)}</strong>${pill(a.status)}${consentBadge(a)}</div>
+          <div class="row"><strong>${fmtTime(a.starts_at)} – ${fmtTime(a.ends_at)}</strong>${pill(a.status)}${consentBadge(a)}${a.mockup ? mockupPill(a.mockup.status) : ''}</div>
           <div class="row" style="margin-top:6px">${avatar(other.avatar, other.name, 'avatar--xs')}<a href="/artists/${isArtist ? me.id : a.artist_id}"><strong>${esc(other.name)}</strong></a><span class="muted small">${esc(other.label)}</span></div>
           ${a.request_title ? `<div class="small muted" style="margin-top:4px">For request: <a class="link" href="/requests/${a.request_id}">${esc(a.request_title)}</a></div>` : ''}
           ${a.flash_title ? `<a class="appt__flash" href="/flash/${a.flash_id}"><img src="${attr(a.flash_thumb_url || a.flash_image_url)}" alt=""><span>Flash: <strong>${esc(a.flash_title)}</strong> · ${money(a.flash_price)}</span></a>` : ''}
@@ -1420,6 +1422,242 @@
     draw();
   }
 
+  /* ---------- placement previews ---------- */
+
+  const MOCKUP_STATUS = { draft: ['Not sent yet', 'pending'], sent: ['Awaiting approval', 'pending'], approved: ['Placement approved', 'confirmed'], changes: ['Changes requested', 'declined'] };
+  const MOCKUP_COLORS = { purple: '#4b2a8a', black: '#111111', red: '#b3262e' };
+  const mockupPill = (status) => `<span class="pill pill--${MOCKUP_STATUS[status][1]}">${MOCKUP_STATUS[status][0]}</span>`;
+
+  /** Editor: photo + stencil, drag to place, sliders for size and angle. */
+  async function viewMockupEditor(params, existingId) {
+    if (!requireLogin()) return;
+    if (state.user.role !== 'artist') { navigate(existingId ? `/mockups/${existingId}` : '/appointments'); return; }
+    loading();
+    let existing = null;
+    let stencil = null;
+    let library = [];
+    let contacts = [];
+    let appts = [];
+    try {
+      if (existingId) ({ mockup: existing } = await api.get(`/api/mockups/${existingId}`));
+      const [lib, inbox, ap] = await Promise.all([api.get('/api/stencils'), api.get('/api/messages').catch(() => ({ conversations: [] })), api.get('/api/appointments')]);
+      library = lib.stencils.filter((s) => s.status === 'ready');
+      contacts = inbox.conversations.filter((c) => c.role === 'client').map((c) => ({ id: c.user_id, name: c.name, avatar_url: c.avatar_url, role: 'client' }));
+      appts = ap.appointments.filter((a) => ['pending', 'confirmed'].includes(a.status));
+      appts.forEach((a) => { if (!contacts.some((c) => c.id === a.client_id)) contacts.push({ id: a.client_id, name: a.client_name, avatar_url: a.client_avatar_url, role: 'client' }); });
+      const stencilId = existing ? existing.stencil_id : Number(params.get('stencil'));
+      stencil = library.find((s) => s.id === stencilId) || null;
+    } catch (e) { return handleError(e); }
+    const t = { ...(existing ? existing.transform : { x: 0.5, y: 0.5, width: 0.4, rotation: 0, mirror: false, opacity: 0.85, color: 'purple' }) };
+    const link = { client_id: existing ? existing.client_id : Number(params.get('client')) || null, appointment_id: existing ? existing.appointment_id : Number(params.get('appointment')) || null };
+    if (link.appointment_id && !link.client_id) { const a = appts.find((x) => x.id === link.appointment_id); if (a) link.client_id = a.client_id; }
+    let photoFile = null;
+    let photoUrl = existing ? existing.photo_url : null;
+    let title = existing ? existing.title : (stencil ? stencil.title : '');
+
+    main.innerHTML = `
+      <div class="page-head">
+        <div><h1>${existing ? 'Adjust placement' : 'Placement preview'}</h1><p class="muted">Lay a stencil over a photo of the spot, size it, and send it to the client to approve before the session.</p></div>
+        ${existing ? `<a class="btn btn--ghost" href="/mockups/${existing.id}">Back</a>` : '<a class="btn btn--ghost" href="/dashboard?tab=stencils">Stencil library</a>'}
+      </div>
+      <div class="mockup-editor">
+        <div>
+          <div class="mockup-stage ${photoUrl ? '' : 'mockup-stage--empty'}" data-stage>
+            ${photoUrl ? `<img class="mockup-stage__photo" src="${attr(photoUrl)}" alt="" data-photo>` : '<label class="mockup-stage__drop"><input type="file" accept="image/*" data-photo-input hidden><strong>Add a photo of the spot</strong><span class="small muted">A straight-on shot of the arm, leg, back... The client\'s own photo works best.</span></label>'}
+            <div class="mockup-ink" data-ink hidden></div>
+          </div>
+          <p class="small muted" style="margin:8px 0 0">Drag the stencil to move it. Scroll over it, or use the slider, to resize.</p>
+        </div>
+        <form class="form mockup-controls" data-form>
+          <div class="error" hidden></div>
+          <div class="field"><label>Stencil</label>
+            ${stencil ? `<div class="mockup-stencil-pick" data-stencil-pick><img src="${attr(stencil.thumb_url)}" alt=""><span><strong>${esc(stencil.title)}</strong><br><button type="button" class="link small" data-change-stencil>Change</button></span></div>` : ''}
+            <div class="mockup-library" data-library ${stencil ? 'hidden' : ''}>${library.length ? library.map((s) => `<button type="button" class="mockup-library__item ${stencil && stencil.id === s.id ? 'active' : ''}" data-pick="${s.id}" title="${attr(s.title)}"><img src="${attr(s.thumb_url)}" alt="${attr(s.title)}"></button>`).join('') : '<span class="small muted">No traced stencils yet. <a class="link" href="/dashboard?tab=stencils">Trace one first.</a></span>'}</div>
+          </div>
+          ${photoUrl ? '<div class="field"><label>Photo</label><label class="btn btn--ghost btn--sm" style="justify-self:start"><input type="file" accept="image/*" data-photo-input hidden>Replace photo</label></div>' : ''}
+          <div class="field"><label>Name</label><input name="title" value="${attr(title)}" maxlength="120" placeholder="Forearm placement"></div>
+          <div class="field"><label>Size <span class="muted" data-size-label></span></label><input type="range" name="width" min="5" max="150" step="1" value="${Math.round(t.width * 100)}"></div>
+          <div class="field"><label>Angle <span class="muted" data-angle-label></span></label><input type="range" name="rotation" min="-180" max="180" step="1" value="${Math.round(t.rotation)}"></div>
+          <div class="field"><label>Ink strength</label><input type="range" name="opacity" min="20" max="100" step="5" value="${Math.round(t.opacity * 100)}"></div>
+          <div class="field"><label>Ink colour</label><div class="chips" data-colors>${Object.keys(MOCKUP_COLORS).map((c) => `<button type="button" class="chip ${t.color === c ? 'active' : ''}" data-color="${c}"><span class="mockup-swatch" style="background:${MOCKUP_COLORS[c]}"></span>${c}</button>`).join('')}</div></div>
+          <label class="check"><input type="checkbox" name="mirror" ${t.mirror ? 'checked' : ''}> Mirror the stencil</label>
+          <div class="field"><label>Client</label><select name="client_id"><option value="">Not chosen yet</option>${contacts.map((c) => `<option value="${c.id}" ${link.client_id === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select><span class="hint">Clients you have messaged or who have booked with you.</span></div>
+          <div class="field"><label>Booking</label><select name="appointment_id" data-appts></select></div>
+          <div class="row" style="flex-wrap:wrap;gap:8px">
+            <button class="btn" data-save>${existing ? 'Save changes' : 'Save placement'}</button>
+            <button type="button" class="btn btn--ghost" data-save-send>Save and send to client</button>
+          </div>
+          <p class="small faint" style="margin:0">The preview is rendered on the server at up to 1600 px so you and the client see the same picture.</p>
+        </form>
+      </div>`;
+
+    const stage = $('[data-stage]');
+    const ink = $('[data-ink]');
+    const form = $('[data-form]');
+    const apptSelect = form.appointment_id;
+    const fillAppts = () => {
+      const cid = Number(form.client_id.value) || null;
+      const options = appts.filter((a) => !cid || a.client_id === cid);
+      apptSelect.innerHTML = `<option value="">No booking</option>${options.map((a) => `<option value="${a.id}" ${link.appointment_id === a.id ? 'selected' : ''}>${new Date(a.starts_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${fmtTime(a.starts_at)} · ${esc(a.client_name)}</option>`).join('')}`;
+    };
+    fillAppts();
+    form.client_id.addEventListener('change', () => { link.client_id = Number(form.client_id.value) || null; if (link.appointment_id && !appts.some((a) => a.id === link.appointment_id && a.client_id === link.client_id)) link.appointment_id = null; fillAppts(); });
+    apptSelect.addEventListener('change', () => { link.appointment_id = Number(apptSelect.value) || null; const a = appts.find((x) => x.id === link.appointment_id); if (a && !link.client_id) { link.client_id = a.client_id; form.client_id.value = String(a.client_id); fillAppts(); } });
+
+    const place = () => {
+      if (!stencil || !photoUrl) { ink.hidden = true; return; }
+      const photo = $('[data-photo]', stage);
+      if (!photo || !photo.clientWidth) { ink.hidden = true; return; }
+      const W = photo.clientWidth; const H = photo.clientHeight;
+      const w = t.width * W;
+      const ratio = stencil.height && stencil.width ? stencil.height / stencil.width : 1.25;
+      const h = w * ratio;
+      ink.hidden = false;
+      ink.style.width = `${w}px`; ink.style.height = `${h}px`;
+      ink.style.left = `${t.x * W - w / 2}px`; ink.style.top = `${t.y * H - h / 2}px`;
+      ink.style.transform = `rotate(${t.rotation}deg) scaleX(${t.mirror ? -1 : 1})`;
+      ink.style.opacity = String(t.opacity);
+      ink.style.background = MOCKUP_COLORS[t.color];
+      const mask = `url("${stencil.image_url}")`;
+      ink.style.maskImage = mask; ink.style.webkitMaskImage = mask;
+      $('[data-size-label]').textContent = `${Math.round(t.width * 100)}% of the photo width`;
+      $('[data-angle-label]').textContent = `${Math.round(t.rotation)}°`;
+    };
+    const stagePhoto = () => $('[data-photo]', stage);
+    if (stagePhoto()) { if (stagePhoto().complete) place(); stagePhoto().addEventListener('load', place); }
+    window.addEventListener('resize', place);
+    cleanupFns.push(() => window.removeEventListener('resize', place));
+
+    // Dragging and scrolling on the stage.
+    let drag = null;
+    stage.addEventListener('pointerdown', (e) => {
+      if (!stencil || !stagePhoto() || e.target.closest('label')) return;
+      e.preventDefault();
+      const rect = stagePhoto().getBoundingClientRect();
+      drag = { dx: e.clientX - (rect.left + t.x * rect.width), dy: e.clientY - (rect.top + t.y * rect.height), moved: false };
+      stage.setPointerCapture(e.pointerId);
+    });
+    stage.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      const rect = stagePhoto().getBoundingClientRect();
+      t.x = Math.min(1.5, Math.max(-0.5, (e.clientX - drag.dx - rect.left) / rect.width));
+      t.y = Math.min(1.5, Math.max(-0.5, (e.clientY - drag.dy - rect.top) / rect.height));
+      drag.moved = true;
+      place();
+    });
+    const endDrag = () => { drag = null; };
+    stage.addEventListener('pointerup', endDrag); stage.addEventListener('pointercancel', endDrag);
+    stage.addEventListener('wheel', (e) => { if (!stencil || !stagePhoto()) return; e.preventDefault(); t.width = Math.min(1.5, Math.max(0.05, t.width * (e.deltaY < 0 ? 1.06 : 0.94))); form.width.value = Math.round(t.width * 100); place(); }, { passive: false });
+
+    form.width.addEventListener('input', () => { t.width = Number(form.width.value) / 100; place(); });
+    form.rotation.addEventListener('input', () => { t.rotation = Number(form.rotation.value); place(); });
+    form.opacity.addEventListener('input', () => { t.opacity = Number(form.opacity.value) / 100; place(); });
+    form.mirror.addEventListener('change', () => { t.mirror = form.mirror.checked; place(); });
+    $$('[data-color]', form).forEach((b) => b.addEventListener('click', () => { t.color = b.dataset.color; $$('[data-color]', form).forEach((x) => x.classList.toggle('active', x === b)); place(); }));
+    $$('[data-pick]', form).forEach((b) => b.addEventListener('click', () => {
+      stencil = library.find((s) => s.id === Number(b.dataset.pick));
+      $$('[data-pick]', form).forEach((x) => x.classList.toggle('active', x === b));
+      if (!form.title.value) form.title.value = stencil.title;
+      const pick = $('[data-stencil-pick]', form);
+      if (pick) { pick.querySelector('img').src = stencil.thumb_url; pick.querySelector('strong').textContent = stencil.title; $('[data-library]', form).hidden = true; }
+      place();
+    }));
+    const change = $('[data-change-stencil]', form);
+    if (change) change.addEventListener('click', () => { $('[data-library]', form).hidden = false; });
+    $$('[data-photo-input]').forEach((input) => input.addEventListener('change', () => {
+      const file = input.files[0];
+      if (!file) return;
+      photoFile = file;
+      photoUrl = URL.createObjectURL(file);
+      stage.classList.remove('mockup-stage--empty');
+      const existingPhoto = stagePhoto();
+      if (existingPhoto) existingPhoto.src = photoUrl;
+      else { const drop = stage.querySelector('.mockup-stage__drop'); if (drop) drop.remove(); stage.insertAdjacentHTML('afterbegin', `<img class="mockup-stage__photo" src="${attr(photoUrl)}" alt="" data-photo>`); }
+      stagePhoto().addEventListener('load', place);
+      if (!$('[data-form] .field label.btn')) form.querySelector('[name=title]').closest('.field').insertAdjacentHTML('beforebegin', '<div class="field"><label>Photo</label><label class="btn btn--ghost btn--sm" style="justify-self:start"><input type="file" accept="image/*" data-photo-input hidden>Replace photo</label></div>');
+    }));
+
+    const save = async () => {
+      if (!stencil) throw new Error('Pick a stencil first.');
+      if (!photoUrl) throw new Error('Add a photo of where the tattoo will go.');
+      const payload = { transform: t, title: form.title.value, client_id: link.client_id || '', appointment_id: link.appointment_id || '' };
+      if (existing && !photoFile) { const r = await api.put(`/api/mockups/${existing.id}`, { ...payload, transform: t }); return r.mockup; }
+      const fd = new FormData();
+      if (photoFile) fd.append('photo', photoFile); else if (existing) fd.append('mockup_id', String(existing.id));
+      fd.append('stencil_id', String(stencil.id));
+      fd.append('transform', JSON.stringify(t));
+      fd.append('title', form.title.value);
+      if (link.client_id) fd.append('client_id', String(link.client_id));
+      if (link.appointment_id) fd.append('appointment_id', String(link.appointment_id));
+      const r = await api.post('/api/mockups', fd);
+      if (existing) await api.del(`/api/mockups/${existing.id}`).catch(() => {});
+      return r.mockup;
+    };
+    const busy = (on) => $$('button', form).forEach((b) => { b.disabled = on; });
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault(); busy(true);
+      try { const m = await save(); toast('Placement saved'); navigate(`/mockups/${m.id}`); } catch (err) { busy(false); handleError(err, $('.error', form)); }
+    });
+    $('[data-save-send]', form).addEventListener('click', async () => {
+      if (!link.client_id) { handleError(new Error('Choose which client this is for.'), $('.error', form)); return; }
+      busy(true);
+      try { const m = await save(); await api.post(`/api/mockups/${m.id}/send`, {}); toast('Sent to the client'); navigate(`/mockups/${m.id}`); } catch (err) { busy(false); handleError(err, $('.error', form)); }
+    });
+  }
+
+  /** One placement: the rendered picture, status, and the actions each side has. */
+  async function viewMockup(id) {
+    if (!requireLogin()) return;
+    loading();
+    let m;
+    try { ({ mockup: m } = await api.get(`/api/mockups/${id}`)); } catch (e) { main.innerHTML = '<div class="empty"><h3>Placement not found</h3><p><a class="link" href="/appointments">Back to bookings</a></p></div>'; return; }
+    const me = state.user;
+    const other = m.is_mine ? { name: m.client_name, avatar: m.client_avatar_url, id: m.client_id, label: 'Client' } : { name: m.artist_name, avatar: m.artist_avatar_url, id: m.artist_id, label: 'Artist' };
+    const when = m.appointment_starts_at ? `${new Date(m.appointment_starts_at).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })} ${fmtTime(m.appointment_starts_at)}` : null;
+    main.innerHTML = `
+      <div class="page-head">
+        <div><h1>${esc(m.title)}</h1><p class="muted">Placement preview${m.stencil_title ? ` · stencil "${esc(m.stencil_title)}"` : ''}${when ? ` · session ${esc(when)}` : ''}</p></div>
+        <div class="row">${mockupPill(m.status)}${m.is_mine ? `<a class="btn btn--ghost btn--sm" href="/mockups/${m.id}/edit">Adjust</a>` : ''}</div>
+      </div>
+      <div class="two-col mockup-view">
+        <div><a class="mockup-view__image" href="${attr(m.image_url)}" data-photo="${attr(m.image_url)}"><img src="${attr(m.image_url)}" alt="${attr(m.title)}" ${m.width && m.height ? `width="${m.width}" height="${m.height}"` : ''}></a></div>
+        <div class="stack">
+          ${other.id ? `<div class="card"><div class="row">${avatar(other.avatar, other.name, 'avatar--sm')}<div><strong>${esc(other.name)}</strong><div class="small muted">${esc(other.label)}</div></div></div>
+            <div class="small muted" style="margin-top:10px">${m.status === 'draft' ? 'Not sent yet.' : `Sent ${timeAgo(m.sent_at)}.`}${m.responded_at ? ` ${m.status === 'approved' ? 'Approved' : 'Changes requested'} ${timeAgo(m.responded_at)}.` : ''}</div>
+            ${m.client_note ? `<blockquote class="mockup-note">${esc(m.client_note)}</blockquote>` : ''}
+            <div class="row" style="margin-top:12px;flex-wrap:wrap;gap:8px">
+              ${m.can_respond ? '<button class="btn btn--sm" data-approve>Approve placement</button><button class="btn btn--ghost btn--sm" data-changes>Ask for changes</button>' : ''}
+              ${m.is_mine && m.client_id ? `<button class="btn btn--sm ${m.status === 'sent' ? 'btn--ghost' : ''}" data-send>${m.status === 'draft' ? 'Send to client' : 'Send again'}</button>` : ''}
+              <a class="btn btn--ghost btn--sm" href="/messages/${other.id}">Message</a>
+            </div></div>` : (m.is_mine ? '<div class="card"><p class="small muted" style="margin:0">No client chosen yet. <a class="link" href="/mockups/' + m.id + '/edit">Choose one</a> to send this placement for approval.</p></div>' : '')}
+          <div class="card">
+            <strong class="small">How it was placed</strong>
+            <div class="small muted" style="margin-top:6px">${Math.round(m.transform.width * 100)}% of the photo width · ${Math.round(m.transform.rotation)}° · ${m.transform.mirror ? 'mirrored · ' : ''}${esc(m.transform.color)} ink</div>
+            ${m.stencil_id && m.is_mine ? `<div class="row" style="margin-top:10px"><a class="link small" href="/dashboard?tab=stencils">Open the stencil library</a></div>` : ''}
+            ${m.is_mine ? '<div class="row" style="margin-top:10px"><button class="link small" data-delete>Delete placement</button></div>' : ''}
+          </div>
+        </div>
+      </div>`;
+    const reload = () => viewMockup(id);
+    const approve = $('[data-approve]');
+    if (approve) approve.addEventListener('click', async () => { try { await api.post(`/api/mockups/${m.id}/respond`, { status: 'approved' }); toast('Placement approved'); reload(); } catch (err) { handleError(err); } });
+    const changes = $('[data-changes]');
+    if (changes) changes.addEventListener('click', () => {
+      const modal = openModal(`<div class="modal__panel"><div class="modal__head"><h3 style="margin:0">Ask for changes</h3><button class="modal__close" data-close-modal aria-label="Close">×</button></div>
+        <form class="form modal__body" data-form><div class="error" hidden></div><div class="field"><label>What should change?</label><textarea name="note" maxlength="500" required placeholder="A little smaller, and turned to follow the muscle."></textarea></div><button class="btn btn--block">Send</button></form></div>`, { small: true });
+      $('[data-form]', modal).addEventListener('submit', async (e) => { e.preventDefault(); try { await api.post(`/api/mockups/${m.id}/respond`, { status: 'changes', note: e.target.note.value }); closeModal(); toast('Sent to the artist'); reload(); } catch (err) { handleError(err, $('.error', e.target)); } });
+    });
+    const send = $('[data-send]');
+    if (send) send.addEventListener('click', () => {
+      const modal = openModal(`<div class="modal__panel"><div class="modal__head"><h3 style="margin:0">Send to ${esc(m.client_name)}</h3><button class="modal__close" data-close-modal aria-label="Close">×</button></div>
+        <form class="form modal__body" data-form><div class="error" hidden></div><div class="field"><label>Message (optional)</label><textarea name="message" maxlength="500" placeholder="Sized at 9 cm across, just under the elbow."></textarea></div><button class="btn btn--block">Send placement</button></form></div>`, { small: true });
+      $('[data-form]', modal).addEventListener('submit', async (e) => { e.preventDefault(); try { await api.post(`/api/mockups/${m.id}/send`, { message: e.target.message.value }); closeModal(); toast('Sent'); reload(); } catch (err) { handleError(err, $('.error', e.target)); } });
+    });
+    const del = $('[data-delete]');
+    if (del) del.addEventListener('click', async () => { if (!window.confirm('Delete this placement?')) return; try { await api.del(`/api/mockups/${m.id}`); toast('Deleted'); navigate('/dashboard?tab=stencils'); } catch (err) { handleError(err); } });
+    $$('[data-photo]', main).forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); openPhoto(a.dataset.photo); }));
+  }
+
   /* ---------- stencil library ---------- */
 
   const STENCIL_SOURCES = { artwork: 'From a gallery piece', flash: 'From flash', upload: 'Uploaded', reference: 'Recreated from a reference' };
@@ -1505,7 +1743,7 @@
             </div>
             <div class="row" style="flex-wrap:wrap;gap:8px">
               <button class="btn btn--sm">Save name</button>
-              ${s.status === 'ready' ? `<button type="button" class="btn btn--ghost btn--sm" data-download>Download</button>` : ''}
+              ${s.status === 'ready' ? `<button type="button" class="btn btn--ghost btn--sm" data-download>Download</button><a class="btn btn--ghost btn--sm" href="/mockups/new?stencil=${s.id}">Preview on skin</a>` : ''}
               <button type="button" class="btn btn--ghost btn--sm" data-regen>${s.status === 'failed' ? 'Try again' : 'Re-trace'}</button>
               <button type="button" class="link small" data-delete>Delete stencil</button>
             </div>
@@ -2404,6 +2642,7 @@
   function attachmentHtml(a) {
     if (a.type === 'image') return `<a class="bubble__photo" href="${attr(a.url)}" data-photo="${attr(a.url)}"><img src="${attr(a.thumb_url || a.url)}" alt="Photo" loading="lazy" ${a.width && a.height ? `style="aspect-ratio:${a.width}/${a.height}"` : ''}></a>`;
     if (a.type === 'artwork') return `<a class="bubble__art" href="/artworks/${a.id}"><img src="${attr(a.thumb_url)}" alt="" loading="lazy"><span><strong>${esc(a.title || 'Tattoo')}</strong><small>${esc(a.style || '')}</small></span></a>`;
+    if (a.type === 'mockup') return `<a class="bubble__art" href="/mockups/${a.id}">${a.thumb_url ? `<img src="${attr(a.thumb_url)}" alt="" loading="lazy">` : ''}<span><strong>${esc(a.title || 'Placement')}</strong><small>Placement preview · ${MOCKUP_STATUS[a.status] ? MOCKUP_STATUS[a.status][0] : ''}</small></span></a>`;
     if (a.type === 'collection') return `<a class="bubble__art" href="/c/${attr(a.token)}">${a.thumb_url ? `<img src="${attr(a.thumb_url)}" alt="" loading="lazy">` : `<span class="bubble__art-icon">${SHARE_ICONS.save}</span>`}<span><strong>${esc(a.title || 'Board')}</strong><small>Reference board · ${a.item_count || 0} piece${a.item_count === 1 ? '' : 's'}</small></span></a>`;
     return '';
   }
@@ -3673,6 +3912,9 @@
     [/^\/book\/(\d+)$/, (m, p) => viewBook(m[1], p)],
     [/^\/appointments$/, (_m, params) => viewAppointments(params)],
     [/^\/appointments\/(\d+)\/consent$/, (m) => viewConsent(m[1])],
+    [/^\/mockups\/new$/, (m, p) => viewMockupEditor(p)],
+    [/^\/mockups\/(\d+)$/, (m) => viewMockup(m[1])],
+    [/^\/mockups\/(\d+)\/edit$/, (m, p) => viewMockupEditor(p, Number(m[1]))],
     [/^\/messages$/, (_m, params) => viewMessages(null, params)],
     [/^\/messages\/(\d+)$/, (m, params) => viewMessages(m[1], params)],
     [/^\/dashboard$/, (m, p) => viewDashboard(p)],

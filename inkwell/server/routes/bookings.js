@@ -8,6 +8,7 @@ const mailer = require('../mailer');
 const analytics = require('../analytics');
 const calendar = require('../calendar');
 const consent = require('../consent');
+const mockups = require('../mockups');
 const flash = require('./flash');
 const waitlist = require('../waitlist');
 
@@ -154,6 +155,7 @@ router.get('/appointments', requireAuth, (req, res) => {
   list.forEach((a) => {
     a.calendar = ['pending', 'confirmed'].includes(a.status) ? calendar.links(a, req.user.id) : null;
     a.consent = consent.statusFor(a.id, a.artist_id);
+    a.mockup = mockups.latestForAppointment(a.id);
   });
   res.json({ appointments: list, timezone: calendar.TIMEZONE });
 });

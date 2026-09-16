@@ -689,6 +689,27 @@ a.ctx__item:hover { border-color: var(--line-strong); }
 .stencil-card__credit a { color: var(--accent); }
 @media (max-width: 760px) { .brief__cols { grid-template-columns: 1fr; } }
 
+/* Placement previews */
+.mockup-editor { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(280px, 1fr); gap: 24px; align-items: start; }
+.mockup-stage { position: relative; overflow: hidden; border-radius: var(--radius); border: 1px solid var(--line); background: var(--bg-elev); touch-action: none; user-select: none; }
+.mockup-stage--empty { aspect-ratio: 4 / 5; display: flex; align-items: center; justify-content: center; }
+.mockup-stage__photo { display: block; width: 100%; height: auto; pointer-events: none; }
+.mockup-stage__drop { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; padding: 30px; cursor: pointer; border: 1px dashed var(--line-strong); border-radius: var(--radius); margin: 20px; }
+.mockup-ink { position: absolute; mask-repeat: no-repeat; -webkit-mask-repeat: no-repeat; mask-size: 100% 100%; -webkit-mask-size: 100% 100%; cursor: grab; pointer-events: none; }
+.mockup-controls { align-content: start; }
+.mockup-controls input[type="range"] { width: 100%; accent-color: var(--accent); }
+.mockup-stencil-pick { display: flex; gap: 12px; align-items: center; }
+.mockup-stencil-pick img { width: 56px; height: 70px; object-fit: contain; background: #fff; border-radius: 8px; border: 1px solid var(--line); }
+.mockup-library { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.mockup-library__item { width: 64px; height: 80px; padding: 0; border-radius: 8px; border: 2px solid var(--line); background: #fff; cursor: pointer; overflow: hidden; }
+.mockup-library__item img { width: 100%; height: 100%; object-fit: contain; }
+.mockup-library__item.active { border-color: var(--accent); }
+.mockup-swatch { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 6px; border: 1px solid rgba(255,255,255,0.3); }
+.mockup-view__image { display: block; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--line); background: #000; }
+.mockup-view__image img { display: block; width: 100%; height: auto; }
+.mockup-note { margin: 10px 0 0; padding: 8px 12px; border-left: 3px solid var(--accent); color: var(--text-muted); font-size: 0.92rem; }
+@media (max-width: 760px) { .mockup-editor, .mockup-view { grid-template-columns: 1fr; } }
+
 /* Waitlist */
 .waitlist-state { display: inline-flex; align-items: center; gap: 8px; font-size: 0.9rem; color: var(--green); }
 .waitlist-entry .tag + .tag { margin-left: 6px; }
