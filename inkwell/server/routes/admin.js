@@ -28,6 +28,7 @@ const REPORT_SELECT = `
   FROM reports rp JOIN users u ON u.id = rp.reporter_id
 `;
 const listReports = db.prepare(`${REPORT_SELECT} WHERE rp.status = ? ORDER BY rp.created_at ASC, rp.id ASC LIMIT 200`);
+const listClosed = db.prepare(`${REPORT_SELECT} WHERE rp.status IN ('resolved', 'dismissed') ORDER BY rp.resolved_at DESC, rp.id DESC LIMIT 200`);
 const getReport = db.prepare(`${REPORT_SELECT} WHERE rp.id = ?`);
 const resolveReport = db.prepare(`
   UPDATE reports SET status = ?, resolution = ?, resolved_by = ?, resolved_at = datetime('now') WHERE id = ?
@@ -83,8 +84,8 @@ router.get('/overview', (_req, res) => {
 });
 
 router.get('/reports', (req, res) => {
-  const status = ['open', 'resolved', 'dismissed'].includes(req.query.status) ? req.query.status : 'open';
-  const reports = listReports.all(status).map((r) => ({
+  const status = ['open', 'resolved', 'dismissed', 'closed'].includes(req.query.status) ? req.query.status : 'open';
+  const reports = (status === 'closed' ? listClosed.all() : listReports.all(status)).map((r) => ({
     ...r,
     target: targetDetail[r.target_type] ? targetDetail[r.target_type].get(r.target_id) || null : null,
   }));

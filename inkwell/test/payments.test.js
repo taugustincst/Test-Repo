@@ -198,6 +198,8 @@ test('completing a session with a total creates a balance payment', async () => 
   assert.equal(r.data.appointment.price, 360);
   const balance = r.data.appointment.payments.find((p) => p.kind === 'balance');
   assert.ok(balance);
+  assert.equal(balance.amount, 360 - appt.payments[0].amount, 'paid deposit comes off the balance');
+
   assert.equal(balance.amount, 300, 'total minus the paid deposit');
   assert.equal(balance.status, 'pending');
   assert.equal(r.data.appointment.amount_due, 300);
@@ -211,6 +213,24 @@ test('completing a session with a total creates a balance payment', async () => 
 
   r = await artist.get('/api/payments');
   assert.ok(r.data.payments.some((p) => p.id === balance.id && p.status === 'paid'));
+
+  // Completing with the deposit still unpaid: the deposit is cancelled and the whole price is the balance.
+  const slot2 = await firstSlotOn(cli, sofia.id, 8);
+  r = await cli.post('/api/appointments', { artist_id: sofia.id, starts_at: slot2 });
+  const appt2 = r.data.appointment;
+  await artist.post(`/api/appointments/${appt2.id}/confirm`);
+  r = await artist.post(`/api/appointments/${appt2.id}/complete`, { price: 200 });
+  assert.equal(r.status, 200);
+  const dep2 = r.data.appointment.payments.find((p) => p.kind === 'deposit');
+  const bal2 = r.data.appointment.payments.find((p) => p.kind === 'balance');
+  assert.equal(dep2.status, 'cancelled', 'unpaid deposit is not billed on top');
+  assert.equal(bal2.amount, 200);
+  assert.equal(bal2.status, 'pending');
+  // A cancelled payment can no longer be confirmed as paid.
+  r = await cli.post(`/api/payments/${dep2.id}/confirm`, { session_id: 'cs_test' });
+  assert.equal(r.status, 409);
+  r = await cli.post(`/api/payments/${dep2.id}/pay`, { card: GOOD_CARD });
+  assert.notEqual(r.status, 200, 'nor paid');
 });
 
 test('artist deposit setting flows through profile and availability endpoints', async () => {

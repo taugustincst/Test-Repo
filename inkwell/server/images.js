@@ -41,11 +41,14 @@ async function processArtwork(file) {
       outName = file.filename; // keep animation and original bytes
     } else {
       outName = `${base}.webp`;
+      // A WebP upload already has this name: write beside it, then swap in the processed file.
+      const tmpName = outName === file.filename ? `${base}.processed.webp` : outName;
       const info = await sharp(src, { failOn: 'error' })
         .rotate()
         .resize({ width: MAX_EDGE, height: MAX_EDGE, fit: 'inside', withoutEnlargement: true })
         .webp({ quality: 84 })
-        .toFile(path.join(UPLOAD_DIR, outName));
+        .toFile(path.join(UPLOAD_DIR, tmpName));
+      if (tmpName !== outName) await fs.rename(path.join(UPLOAD_DIR, tmpName), path.join(UPLOAD_DIR, outName));
       width = info.width;
       height = info.height;
     }
@@ -68,12 +71,14 @@ async function processAvatar(file) {
   const outName = `${file.filename.replace(/\.[a-z0-9]+$/i, '')}.webp`;
   try {
     await inspect(src);
+    const tmpName = outName === file.filename ? `${outName.replace(/\.webp$/, '')}.processed.webp` : outName;
     await sharp(src, { failOn: 'error', pages: 1 })
       .rotate()
       .resize({ width: 320, height: 320, fit: 'cover' })
       .webp({ quality: 84 })
-      .toFile(path.join(UPLOAD_DIR, outName));
-    if (outName !== file.filename) await fs.rm(src, { force: true });
+      .toFile(path.join(UPLOAD_DIR, tmpName));
+    if (tmpName !== outName) await fs.rename(path.join(UPLOAD_DIR, tmpName), path.join(UPLOAD_DIR, outName));
+    else if (outName !== file.filename) await fs.rm(src, { force: true });
     return publicUrl(outName);
   } catch (err) {
     await fs.rm(src, { force: true });

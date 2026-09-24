@@ -44,7 +44,7 @@ const allWaiting = db.prepare(`${ENTRY_SELECT} WHERE w.artist_id = ? AND w.statu
 const artistRow = db.prepare('SELECT u.id, u.name, u.role, u.suspended_at, p.accepting_clients FROM users u LEFT JOIN artist_profiles p ON p.user_id = u.id WHERE u.id = ?');
 const flashRow = db.prepare('SELECT id, artist_id, status FROM flash_designs WHERE id = ?');
 
-const validDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v) && new Date(`${v}T00:00:00Z`).toISOString().slice(0, 10) === v;
+const validDate = (v) => { if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return false; const d = new Date(`${v}T00:00:00Z`); return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === v; };
 
 function shape(row, user) {
   if (!row) return null;

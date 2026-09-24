@@ -147,6 +147,14 @@ test('artists publish, edit, hide and delete flash; clients cannot', async () =>
   assert.ok(!r.data.flash.some((f) => f.id === design.id));
   r = await sofia.put(`/api/flash/${design.id}`, { status: 'sold' });
   assert.equal(r.status, 400, 'status is driven by bookings');
+  // Editing a sold one-off (the edit form always sends a status) must not put it back on sale.
+  const ship = db.prepare(`SELECT id, artist_id FROM flash_designs WHERE title = 'Ship in Storm'`).get();
+  const { c: diego } = await login('diego@inkwell.demo');
+  assert.equal(ship.artist_id, (await diego.get('/api/auth/me')).data.user.id);
+  r = await diego.put(`/api/flash/${ship.id}`, { title: 'Ship in Storm (sold)', status: 'available' });
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  assert.equal(r.data.flash.status, 'sold', 'stays sold');
+  assert.equal(r.data.flash.title, 'Ship in Storm (sold)');
   const { c: mara } = await login('mara@inkwell.demo');
   r = await mara.put(`/api/flash/${design.id}`, { price: 1 });
   assert.equal(r.status, 404, 'only the owner edits');
@@ -179,6 +187,12 @@ test('claiming: booking with a one-off design fixes the price, takes it off the 
   assert.equal(r.data.flash.status, 'claimed');
   r = await jordan.get(`/api/flash?artist_id=${maraId}`);
   assert.ok(!r.data.flash.some((f) => f.id === moth.id), 'claimed design leaves the board');
+  // The owner can still edit a claimed design; the status the form sends is ignored.
+  const { c: maraEdit } = await login('mara@inkwell.demo');
+  r = await maraEdit.put(`/api/flash/${moth.id}`, { description: 'Claimed, but the notes can change.', status: 'available' });
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  assert.equal(r.data.flash.status, 'claimed');
+  assert.equal(r.data.flash.description, 'Claimed, but the notes can change.');
   await new Promise((resolve) => setTimeout(resolve, 60));
   const mail = db.prepare('SELECT body_text FROM email_log WHERE to_user_id = ? ORDER BY id DESC LIMIT 2').all(maraId).map((m) => m.body_text).join('\n');
   assert.match(mail, /flash design "Moth & Moon" \(\$220\)/);
@@ -193,7 +207,8 @@ test('claiming: booking with a one-off design fixes the price, takes it off the 
   r = await mara.del(`/api/flash/${moth.id}`);
   assert.equal(r.status, 400, 'cannot delete a claimed design');
   r = await mara.put(`/api/flash/${moth.id}`, { status: 'hidden' });
-  assert.equal(r.status, 400);
+  assert.equal(r.status, 200);
+  assert.equal(r.data.flash.status, 'claimed', 'a claimed design cannot be hidden; the state is driven by the booking');
 
   // Cancelling releases it.
   r = await jordan.post(`/api/appointments/${appt.id}/cancel`);

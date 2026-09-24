@@ -3,6 +3,30 @@
 const path = require('path');
 const fs = require('fs');
 const express = require('express');
+
+/*
+ * Express 4 does not catch rejected promises from async handlers, and Node exits on an unhandled
+ * rejection. Wrap every route handler as it is registered so a rejection reaches the error
+ * handler like a thrown error would. This must run before any router is created.
+ */
+const Layer = require('express/lib/router/layer');
+Object.defineProperty(Layer.prototype, 'handle', {
+  configurable: true,
+  enumerable: true,
+  get() { return this.__handle; },
+  set(fn) {
+    this.__handle = typeof fn === 'function' && fn.length < 4
+      ? function wrapped(req, res, next) {
+        let out;
+        try { out = fn.call(this, req, res, next); } catch (err) { return next(err); }
+        if (out && typeof out.catch === 'function') out.catch(next);
+        return out;
+      }
+      : fn;
+  },
+});
+process.on('unhandledRejection', (err) => { console.error('[process] unhandled rejection', err); });
+process.on('uncaughtException', (err) => { console.error('[process] uncaught exception, exiting', err); process.exit(1); });
 const compression = require('compression');
 const cookieParser = require('cookie-parser');
 const { db } = require('./db');
@@ -217,12 +241,15 @@ function createApp(options = {}) {
   });
 
   // eslint-disable-next-line no-unused-vars
-  app.use((err, _req, res, _next) => {
-    const status = err.status || (err.code === 'LIMIT_FILE_SIZE' ? 413 : (err.type === 'entity.too.large' ? 413 : 400));
+  app.use((err, req, res, _next) => {
+    // Programming errors (a TypeError from an odd JSON shape, a database error) are ours, not the caller's.
+    const internal = err instanceof TypeError || err instanceof RangeError || err instanceof ReferenceError || /^SQLITE_/.test(err.code || '');
+    const status = err.status || (err.code === 'LIMIT_FILE_SIZE' ? 413 : (err.type === 'entity.too.large' ? 413 : (internal ? 500 : 400)));
     let message = err.message || 'Something went wrong.';
     if (err.code === 'LIMIT_FILE_SIZE') message = 'Images must be 8 MB or smaller.';
     if (err.type === 'entity.parse.failed') message = 'Malformed request body.';
-    if (status >= 500) { console.error(err); message = 'Something went wrong on our side.'; }
+    if (status >= 500) { console.error(`[error] ${req.method} ${req.originalUrl}`, err); message = 'Something went wrong on our side.'; }
+    if (res.headersSent) return;
     res.status(status).json({ error: message });
   });
 

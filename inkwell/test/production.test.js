@@ -181,6 +181,36 @@ test('uploads are validated by content and re-encoded; svg and fake images are r
   bad.append('avatar', new Blob(['nope'], { type: 'image/jpeg' }), 'x.jpg');
   r = await artist.post('/api/auth/me/avatar', bad);
   assert.equal(r.status, 400);
+
+  // WebP uploads share the processed file's name: they must still work, for pieces and avatars.
+  const webp = await sharp({ create: { width: 300, height: 400, channels: 3, background: '#445566' } }).webp().toBuffer();
+  form = new FormData();
+  form.append('image', new Blob([webp], { type: 'image/webp' }), 'piece.webp');
+  form.append('title', 'WebP piece');
+  r = await artist.post(`/api/galleries/${galleryId}/artworks`, form);
+  assert.equal(r.status, 201, JSON.stringify(r.data));
+  assert.match(r.data.artwork.image_url, /\.webp$/);
+  assert.ok(fs.existsSync(path.join(process.env.INKWELL_UPLOAD_DIR, path.basename(r.data.artwork.image_url))));
+  assert.ok(!fs.existsSync(path.join(process.env.INKWELL_UPLOAD_DIR, path.basename(r.data.artwork.image_url).replace(/\.webp$/, '.processed.webp'))), 'no temp file left');
+  const avWebp = new FormData();
+  avWebp.append('avatar', new Blob([await sharp({ create: { width: 200, height: 200, channels: 3, background: '#778899' } }).webp().toBuffer()], { type: 'image/webp' }), 'me.webp');
+  r = await artist.post('/api/auth/me/avatar', avWebp);
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  assert.ok(fs.existsSync(path.join(process.env.INKWELL_UPLOAD_DIR, path.basename(r.data.user.avatar_url))));
+});
+
+test('odd request bodies are answered, logged as ours, and never take the server down', async () => {
+  const anon = client();
+  // A JSON object where a string is expected used to throw inside an async handler and exit the process.
+  let r = await anon.post('/api/auth/forgot', { email: { toString: 1 } });
+  assert.equal(r.status, 500);
+  assert.equal(r.data.error, 'Something went wrong on our side.', 'internal errors are not echoed');
+  r = await anon.get('/api/health');
+  assert.equal(r.status, 200, 'still serving');
+  const { c: cli } = await login('lucia@inkwell.demo');
+  r = await cli.post('/api/messages/1', { body: { toString: 1 } });
+  assert.ok([400, 500].includes(r.status));
+  assert.equal((await cli.get('/api/health')).status, 200);
 });
 
 test('reviews after completed sessions', async () => {
@@ -277,6 +307,13 @@ test('reports, admin queue, suspension and reinstatement', async () => {
   assert.equal(r.status, 400, 'cannot suspend yourself');
   r = await admin.post(`/api/admin/reports/${report.id}/resolve`, { action: 'dismiss' });
   assert.equal(r.status, 400, 'already closed');
+  // The "Closed reports" tab asks for status=closed: resolved and dismissed together, nothing open.
+  r = await admin.get('/api/admin/reports?status=closed');
+  assert.equal(r.status, 200);
+  assert.ok(r.data.reports.length >= 2);
+  assert.ok(r.data.reports.every((x) => ['resolved', 'dismissed'].includes(x.status)));
+  assert.ok(r.data.reports.some((x) => x.status === 'resolved'));
+  assert.ok(!r.data.reports.some((x) => x.status === 'open'));
 });
 
 test('account export and deletion', async () => {

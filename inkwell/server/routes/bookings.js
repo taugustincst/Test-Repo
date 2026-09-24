@@ -155,7 +155,7 @@ router.get('/appointments', requireAuth, (req, res) => {
   list.forEach((a) => {
     a.calendar = ['pending', 'confirmed'].includes(a.status) ? calendar.links(a, req.user.id) : null;
     a.consent = consent.statusFor(a.id, a.artist_id);
-    a.mockup = mockups.latestForAppointment(a.id);
+    a.mockup = mockups.latestForAppointment(a.id, req.user.id === a.artist_id);
   });
   res.json({ appointments: list, timezone: calendar.TIMEZONE });
 });
@@ -262,11 +262,13 @@ router.post('/appointments/:id/:action', requireAuth, async (req, res) => {
     if (raw !== undefined && raw !== null && raw !== '') {
       const price = Number(raw);
       if (!Number.isFinite(price) || price < 0) return res.status(400).json({ error: 'Enter a valid session total.' });
-      const paidDeposit = ledger.paymentsForAppt.all(appt.id)
-        .filter((p) => p.kind === 'deposit' && p.status === 'paid').reduce((n, p) => n + p.amount, 0);
+      const existing = ledger.paymentsForAppt.all(appt.id);
+      const paidDeposit = existing.filter((p) => p.kind === 'deposit' && p.status === 'paid').reduce((n, p) => n + p.amount, 0);
       db.transaction(() => {
         setPrice.run(Math.round(price), appt.id);
         setStatus.run(rule.to, appt.id);
+        // A deposit still unpaid at completion is folded into the balance, never billed on top of it.
+        existing.filter((p) => p.kind === 'deposit' && p.status === 'pending').forEach((p) => ledger.cancelPending(p, 'Folded into the session balance'));
         const balance = ledger.createPending({ appointment: appt, kind: 'balance', amount: Math.round(price) - paidDeposit, note: 'Session balance' });
         if (balance) mailer.notify(mailer.templates.paymentDue(balance, appt));
       })();

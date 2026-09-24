@@ -113,12 +113,13 @@ const getMockup = db.prepare(`${MOCKUP_SELECT} WHERE m.id = ?`);
 const listForArtist = db.prepare(`${MOCKUP_SELECT} WHERE m.artist_id = ? ORDER BY m.updated_at DESC, m.id DESC LIMIT 200`);
 const listForClient = db.prepare(`${MOCKUP_SELECT} WHERE m.client_id = ? AND m.status <> 'draft' ORDER BY m.updated_at DESC, m.id DESC LIMIT 200`);
 const latestForAppointmentStmt = db.prepare(`SELECT id, status, thumb_url, title, sent_at, responded_at FROM mockups WHERE appointment_id = ? AND status <> 'draft' ORDER BY updated_at DESC, id DESC LIMIT 1`);
+const latestForAppointmentAnyStmt = db.prepare('SELECT id, status, thumb_url, title, sent_at, responded_at FROM mockups WHERE appointment_id = ? ORDER BY updated_at DESC, id DESC LIMIT 1');
 const insertMockup = db.prepare(`
   INSERT INTO mockups (artist_id, client_id, appointment_id, stencil_id, title, photo_url, transform, image_url, thumb_url, width, height)
   VALUES (@artist_id, @client_id, @appointment_id, @stencil_id, @title, @photo_url, @transform, @image_url, @thumb_url, @width, @height)
 `);
 const updateMockup = db.prepare(`
-  UPDATE mockups SET client_id = @client_id, appointment_id = @appointment_id, title = @title, transform = @transform, image_url = @image_url, thumb_url = @thumb_url,
+  UPDATE mockups SET client_id = @client_id, appointment_id = @appointment_id, stencil_id = @stencil_id, title = @title, transform = @transform, image_url = @image_url, thumb_url = @thumb_url,
     width = @width, height = @height, status = @status, updated_at = datetime('now') WHERE id = @id
 `);
 const markSent = db.prepare(`UPDATE mockups SET status = 'sent', sent_at = datetime('now'), responded_at = NULL, client_note = NULL, updated_at = datetime('now') WHERE id = ?`);
@@ -172,7 +173,8 @@ function shape(row, user) {
   };
 }
 
-const latestForAppointment = (appointmentId) => latestForAppointmentStmt.get(appointmentId) || null;
+/** The booking card's placement: the artist also sees their own unsent drafts. */
+const latestForAppointment = (appointmentId, includeDrafts = false) => (includeDrafts ? latestForAppointmentAnyStmt : latestForAppointmentStmt).get(appointmentId) || null;
 
 /** Attachment card for the conversation. */
 const attachment = (row) => ({ type: 'mockup', id: row.id, title: row.title, thumb_url: row.thumb_url, status: row.status });
@@ -272,11 +274,17 @@ router.put('/:id', requireRole('artist'), async (req, res, next) => {
     const body = req.body || {};
     const links = resolveLinks(req, { client_id: body.client_id === undefined ? row.client_id : body.client_id, appointment_id: body.appointment_id === undefined ? row.appointment_id : body.appointment_id }, res);
     if (!links) return;
-    let { image_url: imageUrl, thumb_url: thumbUrl, width, height, transform: transformJson, status } = row;
-    if (body.transform !== undefined) {
-      const stencil = stencilOf.get(row.stencil_id);
+    let { image_url: imageUrl, thumb_url: thumbUrl, width, height, transform: transformJson, status, stencil_id: stencilId } = row;
+    if (body.stencil_id !== undefined && Number(body.stencil_id) !== row.stencil_id) {
+      const next = stencilOf.get(Number(body.stencil_id));
+      if (!next || next.artist_id !== req.user.id) return res.status(400).json({ error: 'Pick a stencil from your library.' });
+      if (next.status !== 'ready') return res.status(400).json({ error: 'That stencil has not been traced yet.' });
+      stencilId = next.id;
+    }
+    if (body.transform !== undefined || stencilId !== row.stencil_id) {
+      const stencil = stencilOf.get(stencilId);
       if (!stencil || stencil.status !== 'ready') return res.status(400).json({ error: 'The stencil behind this placement is gone; make a new placement.' });
-      const transform = normaliseTransform(body.transform);
+      const transform = normaliseTransform(body.transform === undefined ? row.transform : body.transform);
       const result = await render(localFile(row.photo_url), localFile(stencil.image_url), transform);
       const files = await writeRender(result);
       removeByUrl(row.image_url);
@@ -287,7 +295,7 @@ router.put('/:id', requireRole('artist'), async (req, res, next) => {
     }
     if (links.client_id !== row.client_id && status !== 'draft') status = 'draft';
     updateMockup.run({
-      id: row.id, client_id: links.client_id, appointment_id: links.appointment_id,
+      id: row.id, client_id: links.client_id, appointment_id: links.appointment_id, stencil_id: stencilId,
       title: body.title === undefined ? row.title : (String(body.title).trim().slice(0, 120) || row.title),
       transform: transformJson, image_url: imageUrl, thumb_url: thumbUrl, width, height, status,
     });

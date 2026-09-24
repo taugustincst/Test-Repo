@@ -340,14 +340,23 @@ async function processOne(row) {
 }
 
 let running = false;
-/** Work through the queue, one at a time so image processing never floods the CPU. */
+let kickedWhileRunning = false;
+/**
+ * Work through the queue, one at a time so image processing never floods the CPU. A call that
+ * arrives while a run is in progress (an upload during the scheduler's backfill, say) is not
+ * lost: the running pass schedules one more pass when it finishes.
+ */
 async function processPending(limit = 10) {
-  if (running) return 0;
+  if (running) { kickedWhileRunning = true; return 0; }
   running = true;
+  kickedWhileRunning = false;
   let done = 0;
   try {
     for (const row of pendingRows.all(limit)) { await processOne(row); done += 1; }
-  } finally { running = false; }
+  } finally {
+    running = false;
+    if (kickedWhileRunning) setImmediate(() => { processPending(Math.max(limit, 10)).catch((err) => console.error('[stencils]', err.message)); });
+  }
   return done;
 }
 
