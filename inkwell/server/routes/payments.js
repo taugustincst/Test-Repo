@@ -96,6 +96,7 @@ router.post('/:id/confirm', requireAuth, async (req, res) => {
   if (!payment) return res.status(404).json({ error: 'Payment not found.' });
   if (payment.payer_id !== req.user.id) return res.status(403).json({ error: 'This is not your payment.' });
   if (payment.status === 'paid') return res.json({ payment });
+  if (payment.status !== 'pending') return res.status(409).json({ error: `This payment was ${payment.status} and can no longer be completed. If you were charged, the amount will be refunded.` });
   if (provider.mode !== 'redirect') return res.status(400).json({ error: 'Nothing to confirm for this provider.' });
   const sessionId = String((req.body || {}).session_id || '');
   if (!sessionId) return res.status(400).json({ error: 'Missing checkout session.' });

@@ -77,7 +77,9 @@ function validate(body, current = {}) {
   if (!Number.isInteger(price) || price < 0 || price > 100000) return { error: 'Enter a whole-dollar price.' };
   const style = b.style === undefined ? (current.style || '') : (STYLES.includes(b.style) ? b.style : '');
   const size = b.size_label === undefined ? (current.size_label || '') : (SIZES.includes(b.size_label) ? b.size_label : '');
-  const status = b.status === undefined ? (current.status || 'available') : String(b.status);
+  let status = b.status === undefined ? (current.status || 'available') : String(b.status);
+  // Claimed and sold designs keep their state whatever the form sends; only free designs toggle.
+  if (['claimed', 'sold'].includes(current.status)) status = current.status;
   if (!['available', 'hidden'].includes(status) && status !== current.status) return { error: 'A design can be available or hidden.' };
   return {
     title,
@@ -134,7 +136,6 @@ router.post('/', requireRole('artist'), upload.single('image'), async (req, res)
 router.put('/:id', requireRole('artist'), (req, res) => {
   const row = getFlash.get(req.params.id);
   if (!row || row.artist_id !== req.user.id) return res.status(404).json({ error: 'Design not found.' });
-  if (row.status === 'claimed' && (req.body || {}).status && req.body.status !== 'claimed') return res.status(400).json({ error: 'This design is claimed by a booking. Cancel the booking first.' });
   const v = validate(req.body, row);
   if (v.error) return res.status(400).json({ error: v.error });
   updateFlash.run({ ...v, id: row.id });

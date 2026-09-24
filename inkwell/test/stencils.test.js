@@ -265,6 +265,22 @@ test('the scheduler backfills pieces that predate the library; artists can trace
   assert.ok(list.data.counts.ready >= sofiaPieces - list.data.counts.failed);
 });
 
+test('a trace request that arrives during a run is picked up when the run ends, not ten minutes later', async () => {
+  const before = db.prepare(`SELECT COUNT(*) AS n FROM stencils WHERE status = 'pending'`).get().n;
+  const pieces = db.prepare(`SELECT id, artist_id, image_url, title FROM artworks WHERE NOT EXISTS (SELECT 1 FROM stencils s WHERE s.source_type = 'artwork' AND s.source_id = artworks.id) ORDER BY id LIMIT 3`).all();
+  assert.equal(pieces.length, 3);
+  stencils.enqueue(pieces[0].artist_id, 'artwork', pieces[0].id, pieces[0].image_url, pieces[0].title);
+  const first = stencils.processPending(1);
+  // While the first row is tracing, two more arrive and a second call is made.
+  stencils.enqueue(pieces[1].artist_id, 'artwork', pieces[1].id, pieces[1].image_url, pieces[1].title);
+  stencils.enqueue(pieces[2].artist_id, 'artwork', pieces[2].id, pieces[2].image_url, pieces[2].title);
+  const second = await stencils.processPending(5);
+  assert.equal(second, 0, 'a concurrent call does not run in parallel');
+  assert.equal(await first, 1);
+  await waitFor(() => db.prepare(`SELECT COUNT(*) AS n FROM stencils WHERE source_type = 'artwork' AND source_id IN (?, ?, ?) AND status = 'ready'`).get(pieces[0].id, pieces[1].id, pieces[2].id).n === 3 ? true : null, 20000);
+  assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM stencils WHERE status = 'pending'`).get().n, before, 'queue drained by the follow-up pass');
+});
+
 test('library routes: upload, rename, favourite, detail change, regenerate, filters, print size, delete, access', async () => {
   const { c: diego, id: diegoId } = await login('diego@inkwell.demo');
   const { c: mara } = await login('mara@inkwell.demo');

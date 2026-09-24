@@ -147,6 +147,15 @@
       </article>`;
   }
 
+  /** Shared and deep links land here: show the piece's gallery with the piece open. */
+  async function viewArtworkPage(id) {
+    loading();
+    let artwork;
+    try { ({ artwork } = await api.get(`/api/artworks/${id}`)); } catch (e) { main.innerHTML = '<div class="empty"><h3>Piece not found</h3><p>It may have been removed. <a class="link" href="/">Back to explore</a></p></div>'; return; }
+    await viewGallery(artwork.gallery_id);
+    openArtwork(artwork.id);
+  }
+
   async function openArtwork(id) {
     let artwork;
     try { ({ artwork } = await api.get(`/api/artworks/${id}`)); } catch (e) { return handleError(e); }
@@ -1213,6 +1222,7 @@
     loading();
     const id = params.get('payment');
     const sessionId = params.get('session_id');
+    if (!id || !sessionId) { toast('That payment link is missing its details. Open the booking to pay.', 'error'); navigate('/appointments'); return; }
     try {
       await api.post(`/api/payments/${id}/confirm`, { session_id: sessionId });
       toast('Payment received');
@@ -1581,7 +1591,7 @@
       if (!stencil) throw new Error('Pick a stencil first.');
       if (!photoUrl) throw new Error('Add a photo of where the tattoo will go.');
       const payload = { transform: t, title: form.title.value, client_id: link.client_id || '', appointment_id: link.appointment_id || '' };
-      if (existing && !photoFile) { const r = await api.put(`/api/mockups/${existing.id}`, { ...payload, transform: t }); return r.mockup; }
+      if (existing && !photoFile) { const r = await api.put(`/api/mockups/${existing.id}`, { ...payload, transform: t, stencil_id: stencil.id }); return r.mockup; }
       const fd = new FormData();
       if (photoFile) fd.append('photo', photoFile); else if (existing) fd.append('mockup_id', String(existing.id));
       fd.append('stencil_id', String(stencil.id));
@@ -1810,7 +1820,10 @@
     let data = null;
     let pollTimer = null;
     const load = async () => {
-      try { data = await api.get('/api/stencils', { source: filter.source || undefined, favorites: filter.favorites ? '1' : undefined }); } catch (err) { return handleError(err); }
+      try {
+        data = await api.get('/api/stencils', { source: filter.source || undefined, favorites: filter.favorites ? '1' : undefined });
+        data.mockups = (await api.get('/api/mockups').catch(() => ({ mockups: [] }))).mockups;
+      } catch (err) { return handleError(err); }
       draw();
       clearTimeout(pollTimer);
       if (data.counts.pending && panel.isConnected) pollTimer = setTimeout(load, 2500);
@@ -1839,6 +1852,8 @@
           <span class="small muted" data-status>${counts.pending ? `${counts.pending} tracing…` : `${counts.ready} ready`}${counts.failed ? ` · ${counts.failed} could not be traced` : ''}</span>
         </div>
         <div data-inspiration hidden></div>
+        ${data.mockups && data.mockups.length ? `<div class="section__head" style="margin-top:6px"><h3 style="margin:0">Placements</h3><span class="small muted">${data.mockups.length} preview${data.mockups.length === 1 ? '' : 's'}</span></div>
+          <div class="placement-list">${data.mockups.slice(0, 12).map((m) => `<a class="placement-list__item" href="/mockups/${m.id}"><img src="${attr(m.thumb_url)}" alt=""><span><strong>${esc(m.title)}</strong><small>${m.client_name ? esc(m.client_name) : 'No client yet'} · ${MOCKUP_STATUS[m.status][0]}</small></span></a>`).join('')}</div>` : ''}
         ${stencils.length ? `<div class="grid-art stencil-grid">${stencils.map(stencilCard).join('')}</div>` : `<div class="empty"><h3>${counts.total ? 'Nothing here' : 'No stencils yet'}</h3><p>${counts.total ? 'Try another filter.' : 'Upload a piece to a gallery, post flash, or trace an image directly. Pieces uploaded before the library existed are traced by the scheduler; "Trace missing pieces" does it now.'}</p></div>`}`;
       $$('[data-source]', panel).forEach((b) => b.addEventListener('click', () => { filter.source = b.dataset.source; filter.favorites = false; load(); }));
       const inspireBox = $('[data-inspiration]', panel);
@@ -1878,10 +1893,11 @@
 
   async function viewFlashBoard(params) {
     loading();
-    const filters = { style: params.get('style') || '', max_price: params.get('max_price') || '', sort: params.get('sort') || 'newest' };
+    const filters = { style: params.get('style') || '', max_price: params.get('max_price') || '', sort: params.get('sort') || 'newest', artist_id: params.get('artist_id') || '' };
     let data;
     try { data = await api.get('/api/flash', filters); } catch (e) { return handleError(e); }
     const me = state.user;
+    const byArtist = filters.artist_id && data.flash.length ? data.flash[0].artist_name : null;
     main.innerHTML = `
       <div class="page-head">
         <div><h1>Flash</h1><p class="muted">Pre-drawn designs at a fixed price. Pick one, book a slot, done. One-off designs go to the first person who books.</p></div>
@@ -1899,9 +1915,11 @@
           <option value="price_desc" ${filters.sort === 'price_desc' ? 'selected' : ''}>Price: high to low</option>
         </select>
       </form>
+      ${filters.artist_id ? `<p class="small muted" style="margin:-6px 0 14px">Showing designs by <a class="link" href="/artists/${attr(filters.artist_id)}">${esc(byArtist || 'one artist')}</a> · <a class="link" href="/flash">Show everyone</a></p>` : ''}
       ${data.flash.length ? `<div class="grid-art">${data.flash.map((f) => flashCard(f)).join('')}</div>` : '<div class="empty"><h3>Nothing on the board right now</h3><p>Try another style or price, or follow artists to hear when they post new flash.</p></div>'}`;
     $('[data-filters]').addEventListener('change', (e) => {
       const p = new URLSearchParams();
+      if (filters.artist_id) p.set('artist_id', filters.artist_id);
       ['style', 'max_price', 'sort'].forEach((k) => { const v = e.currentTarget[k].value; if (v && !(k === 'sort' && v === 'newest')) p.set(k, v); });
       navigate(`/flash${p.toString() ? `?${p}` : ''}`);
     });
@@ -1920,11 +1938,12 @@
       <div class="field"><label>Style</label><select name="style">${styleOptions(f.style || '', true)}</select></div>
       <div class="field"><label>Notes</label><textarea name="description" placeholder="Placement it suits, sittings, what is included">${esc(f.description || '')}</textarea></div>
       <label class="check"><input type="checkbox" name="repeatable" ${f.repeatable ? 'checked' : ''}> Repeatable: more than one person can get this design</label>
-      ${f.id ? `<label class="check"><input type="checkbox" name="hidden" ${f.status === 'hidden' ? 'checked' : ''} ${f.status === 'claimed' ? 'disabled' : ''}> Hide from the board</label>` : ''}`;
+      ${f.id ? `<label class="check"><input type="checkbox" name="hidden" ${f.status === 'hidden' ? 'checked' : ''} ${['claimed', 'sold'].includes(f.status) ? 'disabled' : ''}> Hide from the board</label>` : ''}`;
   }
 
   function flashPayload(form) {
-    return { title: form.title.value, price: Number(form.price.value), size_label: form.size_label.value, style: form.style.value, description: form.description.value, repeatable: form.repeatable.checked, status: form.hidden && form.hidden.checked ? 'hidden' : (form.hidden ? 'available' : undefined) };
+    const canToggle = form.hidden && !form.hidden.disabled;
+    return { title: form.title.value, price: Number(form.price.value), size_label: form.size_label.value, style: form.style.value, description: form.description.value, repeatable: form.repeatable.checked, status: canToggle ? (form.hidden.checked ? 'hidden' : 'available') : undefined };
   }
 
   function newFlashModal(onDone) {
@@ -2394,6 +2413,13 @@
             </div>
           </article>`).join('')}</div>` : `<div class="empty"><h3>Nothing saved yet</h3><p>${c.is_owner ? 'Open any tattoo and choose Save.' : 'This board is empty.'}</p></div>`}`;
       bindShare();
+      if (c.is_owner && !c.is_public) {
+        // Sharing a private board makes it public first, so the link actually works for the recipient.
+        $$('.page-head [data-share]').forEach((b) => b.addEventListener('click', async (e) => {
+          e.stopImmediatePropagation();
+          try { ({ collection: c } = await api.put(`/api/collections/${c.id}`, { is_public: true })); toast('Board is now viewable by anyone with the link'); render(); shareSheet(JSON.parse(b.dataset.share)); } catch (err) { handleError(err); }
+        }, { capture: true }));
+      }
       $$('[data-remove]').forEach((b) => b.addEventListener('click', async (e) => {
         e.stopPropagation();
         try { ({ collection: c } = await api.del(`/api/collections/${c.id}/items/${b.dataset.remove}`)); render(); } catch (err) { handleError(err); }
@@ -3902,6 +3928,7 @@
     [/^\/artists$/, (m, p) => viewArtists(p)],
     [/^\/artists\/(\d+)$/, (m) => viewArtist(m[1])],
     [/^\/galleries\/(\d+)$/, (m) => viewGallery(m[1])],
+    [/^\/artworks\/(\d+)$/, (m) => viewArtworkPage(m[1])],
     [/^\/flash$/, (_m, params) => viewFlashBoard(params)],
     [/^\/flash\/(\d+)$/, (m) => viewFlash(m[1])],
     [/^\/collections$/, () => viewCollections()],
@@ -3931,6 +3958,15 @@
     [/^\/analytics$/, (m, p) => viewAnalytics(p)],
   ];
 
+  /** Views render asynchronously; give the anchor a few chances to appear before giving up. */
+  function scrollToHash(tries = 0) {
+    if (!location.hash) return;
+    let el = null;
+    try { el = document.querySelector(location.hash); } catch { return; }
+    if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
+    if (tries < 8) setTimeout(() => scrollToHash(tries + 1), 250);
+  }
+
   function route() {
     if (!state.ready) return;
     cleanupFns.forEach((fn) => fn());
@@ -3944,7 +3980,7 @@
     window.scrollTo({ top: 0 });
     for (const [re, handler] of routes) {
       const m = path.match(re);
-      if (m) { handler(m, params); return; }
+      if (m) { Promise.resolve(handler(m, params)).then(() => scrollToHash()).catch(() => {}); return; }
     }
     main.innerHTML = '<div class="empty"><h3>Page not found</h3><p><a class="link" href="/">Back to explore</a></p></div>';
   }

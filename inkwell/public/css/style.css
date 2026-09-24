@@ -710,6 +710,12 @@ a.ctx__item:hover { border-color: var(--line-strong); }
 .mockup-note { margin: 10px 0 0; padding: 8px 12px; border-left: 3px solid var(--accent); color: var(--text-muted); font-size: 0.92rem; }
 @media (max-width: 760px) { .mockup-editor, .mockup-view { grid-template-columns: 1fr; } }
 
+/* Placement list in the stencil library */
+.placement-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; margin-bottom: 18px; }
+.placement-list__item { display: flex; gap: 10px; align-items: center; padding: 8px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg-elev); color: inherit; }
+.placement-list__item img { width: 48px; height: 60px; object-fit: cover; border-radius: 6px; }
+.placement-list__item small { display: block; color: var(--text-muted); }
+
 /* Waitlist */
 .waitlist-state { display: inline-flex; align-items: center; gap: 8px; font-size: 0.9rem; color: var(--green); }
 .waitlist-entry .tag + .tag { margin-left: 6px; }

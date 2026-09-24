@@ -161,8 +161,6 @@ test('artist creates a placement from a photo, ties it to a booking, sends it; t
   assert.equal((await jordan.get(`/api/mockups/${m.id}`)).status, 404);
   assert.equal((await jordan.get('/api/mockups')).data.mockups.length, 0);
   assert.equal((await hana.get(`/api/mockups/${m.id}`)).status, 404);
-  r = await mara.get('/api/appointments');
-  assert.equal(r.data.appointments.find((a) => a.id === appt.id).mockup, null, 'drafts do not show on the booking');
 
   // Adjust: re-render, new file, still a draft.
   const oldImage = m.image_url;
@@ -173,6 +171,22 @@ test('artist creates a placement from a photo, ties it to a booking, sends it; t
   assert.notEqual(r.data.mockup.image_url, oldImage);
   const smaller = await inkBox(r.data.mockup.image_url);
   assert.ok(smaller.n < box.n, 'less ink when smaller');
+  // The artist sees their own draft on the booking card; the client does not.
+  r = await mara.get('/api/appointments');
+  assert.equal(r.data.appointments.find((a) => a.id === appt.id).mockup.status, 'draft');
+  assert.equal((await jordan.get('/api/appointments')).data.appointments.find((a) => a.id === appt.id).mockup, null);
+  // Swapping the stencil re-renders with the new one.
+  fd = new FormData();
+  fd.append('image', new Blob([await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400"><rect width="400" height="400" fill="#fff"/><rect x="60" y="60" width="280" height="280" fill="none" stroke="#111" stroke-width="14"/></svg>')).png().toBuffer()], { type: 'image/png' }), 'square.png');
+  fd.append('title', 'Square');
+  const square = (await mara.post('/api/stencils', fd)).data.stencil;
+  assert.equal(square.status, 'ready');
+  r = await mara.put(`/api/mockups/${m.id}`, { stencil_id: square.id });
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  assert.equal(r.data.mockup.stencil_id, square.id);
+  assert.equal(r.data.mockup.stencil_title, 'Square');
+  const otherArtistStencil = db.prepare('SELECT id FROM stencils WHERE artist_id <> ? LIMIT 1').get(maraId);
+  if (otherArtistStencil) assert.equal((await mara.put(`/api/mockups/${m.id}`, { stencil_id: otherArtistStencil.id })).status, 400);
 
   // Send: message with the preview, booking shows it, client can respond.
   r = await mara.post(`/api/mockups/${m.id}/send`, { message: 'About 9 cm across. What do you think?' });
